@@ -17,8 +17,6 @@ interface SyncLog {
   duration_seconds: number | null;
 }
 
-const TRADE_SHOW_PORTAL_URL = process.env.NEXT_PUBLIC_TRADE_SHOW_PORTAL_URL || 'http://localhost:3000';
-
 export default function SyncPage() {
   const [syncLogs, setSyncLogs] = useState<SyncLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,7 +41,7 @@ export default function SyncPage() {
   async function triggerSync(syncType: string) {
     setSyncing(syncType);
     try {
-      const response = await fetch(`${TRADE_SHOW_PORTAL_URL}/api/admin/sync-${syncType}`, {
+      const response = await fetch(`/api/admin/sync-${syncType}`, {
         method: 'POST',
       });
       const result = await response.json();
@@ -57,12 +55,14 @@ export default function SyncPage() {
   }
 
   const syncButtons = [
+    { type: 'all', label: 'Sync All', source: 'All Sources', color: 'bg-red-600 hover:bg-red-700' },
     { type: 'customers', label: 'Customers', source: 'ApparelMagic', color: 'bg-brand-600 hover:bg-brand-700' },
     { type: 'products', label: 'Products', source: 'ApparelMagic', color: 'bg-blue-600 hover:bg-blue-700' },
     { type: 'inventory', label: 'Inventory', source: 'ApparelMagic', color: 'bg-purple-600 hover:bg-purple-700' },
     { type: 'orders', label: 'Orders', source: 'ApparelMagic', color: 'bg-green-600 hover:bg-green-700' },
     { type: 'invoices', label: 'Invoices', source: 'ApparelMagic', color: 'bg-yellow-600 hover:bg-yellow-700' },
     { type: 'shipments', label: 'Shipments', source: 'ShipStation', color: 'bg-orange-600 hover:bg-orange-700' },
+    { type: 'pick-tickets', label: 'Pick Tickets', source: 'ApparelMagic', color: 'bg-teal-600 hover:bg-teal-700' },
   ];
 
   return (
@@ -74,7 +74,7 @@ export default function SyncPage() {
 
       <div className="card mb-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Trigger Sync</h2>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {syncButtons.map((btn) => (
             <button
               key={btn.type}
@@ -100,7 +100,7 @@ export default function SyncPage() {
           ))}
         </div>
         <p className="text-sm text-gray-500 mt-4">
-          ⚠️ Syncs can take a long time. Run from Trade Show Portal terminal for best results.
+          Syncs run directly from Advance HQ. Watch the terminal for progress.
         </p>
       </div>
 
@@ -148,9 +148,9 @@ export default function SyncPage() {
                       </span>
                     </td>
                     <td className="table-cell">
-                      <p>{log.records_processed.toLocaleString()} processed</p>
+                      <p>{log.records_processed?.toLocaleString() || 0} processed</p>
                       <p className="text-xs text-gray-500">
-                        {log.records_created} new, {log.records_updated} updated
+                        {log.records_created || 0} new, {log.records_updated || 0} updated
                         {log.errors > 0 && <span className="text-red-600">, {log.errors} errors</span>}
                       </p>
                     </td>
