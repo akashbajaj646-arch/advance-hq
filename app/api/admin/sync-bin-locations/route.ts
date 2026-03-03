@@ -113,18 +113,6 @@ export async function POST() {
     });
   } catch (error: any) {
     console.error('Sync bin locations error:', error);
-    // Also update inventory table
-    let inventoryUpdated = 0;
-    for (let i = 0; i < skuIds.length; i += BATCH_SIZE) {
-      const batch = skuIds.slice(i, i + BATCH_SIZE);
-      for (const skuId of batch) {
-        const { error } = await supabase
-          .from('inventory')
-          .update({ bin_location: locationMap[skuId] })
-          .eq('sku_id', skuId);
-        if (!error) inventoryUpdated++;
-      }
-    }
 
     return NextResponse.json({ error: error.message || 'Sync failed' }, { status: 500 });
   }
