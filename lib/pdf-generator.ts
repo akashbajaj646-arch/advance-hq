@@ -22,7 +22,7 @@ async function loadLogo(): Promise<string | null> {
 // Load default template for entity type
 async function loadDefaultTemplate(entityType: string): Promise<PrintTemplate> {
   try {
-    const { data } = await supabase
+    const { data } = await db
       .from('print_templates')
       .select('*')
       .eq('entity_type', entityType)
@@ -38,7 +38,7 @@ async function loadDefaultTemplate(entityType: string): Promise<PrintTemplate> {
       };
     }
     // Fall back to any template for this type
-    const { data: fallback } = await supabase
+    const { data: fallback } = await db
       .from('print_templates')
       .select('*')
       .eq('entity_type', entityType)
@@ -61,7 +61,7 @@ async function loadDefaultTemplate(entityType: string): Promise<PrintTemplate> {
 // Load specific template by ID
 async function loadTemplateById(templateId: string): Promise<PrintTemplate | null> {
   try {
-    const { data } = await supabase
+    const { data } = await db
       .from('print_templates')
       .select('*')
       .eq('id', templateId)
@@ -83,7 +83,7 @@ async function loadTemplateById(templateId: string): Promise<PrintTemplate | nul
 // Get all templates for an entity type (for template picker)
 export async function getTemplatesForEntity(entityType: string): Promise<PrintTemplate[]> {
   try {
-    const { data } = await supabase
+    const { data } = await db
       .from('print_templates')
       .select('id, name, entity_type, is_default')
       .eq('entity_type', entityType)
