@@ -144,7 +144,7 @@ export default function ShipmentsPage() {
                   {selected.tracking_number && <span className="text-sm text-blue-600">{selected.tracking_number}</span>}
                 </div>
               </div>
-              <div className="flex items-center gap-2"><PrintButton entityType="shipment" onDownload={() => generateShipmentPDF(selected, shipmentBoxes || [], 'download', [])} onPrint={() => generateShipmentPDF(selected, shipmentBoxes || [], 'print', [])} /><button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button></div>
+              <div className="flex items-center gap-2"><PrintButton entityType="shipment" onDownload={() => generateShipmentPDF(selected, shipmentItems || [], 'download', [])} onPrint={() => generateShipmentPDF(selected, shipmentItems || [], 'print', [])} /><button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button></div>
             </div>
 
             <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">
