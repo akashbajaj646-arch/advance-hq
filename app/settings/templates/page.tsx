@@ -84,7 +84,7 @@ export default function TemplatesPage() {
       await db.update('print_templates', { is_default: true }, [{ op: 'eq', col: 'id', val: tmpl.id }]);
     }
     await loadTemplates();
-    if (editing?.id === tmpl.id) setEditing({ ...editing, is_default: true });
+    if (editing?.id === tmpl.id) setEditing({ ...editing, is_default: true } as PrintTemplate);
   }
 
   async function deleteTemplate(tmpl: PrintTemplate) {
