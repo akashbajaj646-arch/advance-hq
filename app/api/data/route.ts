@@ -76,7 +76,7 @@ async function handleQuery(body: any) {
     return NextResponse.json({ error: `Table not allowed: ${table}` }, { status: 403 });
   }
 
-  let query = supabaseAdmin.from(table).select(select || '*', {
+  let query: any = supabaseAdmin.from(table).select(select || '*', {
     count: count || undefined,
     head: head || false,
   });
