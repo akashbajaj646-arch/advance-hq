@@ -158,7 +158,7 @@ async function handleMutate(body: any) {
   }
 
   if (type === 'update' && filters) {
-    let query = supabaseAdmin.from(table).update(payload);
+    let query: any = supabaseAdmin.from(table).update(payload);
     for (const f of filters) {
       if (f.op === 'eq') query = query.eq(f.col, f.val);
     }
@@ -168,7 +168,7 @@ async function handleMutate(body: any) {
   }
 
   if (type === 'delete' && filters) {
-    let query = supabaseAdmin.from(table).delete();
+    let query: any = supabaseAdmin.from(table).delete();
     for (const f of filters) {
       if (f.op === 'eq') query = query.eq(f.col, f.val);
     }
