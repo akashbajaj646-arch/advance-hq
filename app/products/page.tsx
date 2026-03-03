@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 
 interface Product {
   [key: string]: any;
@@ -191,19 +191,19 @@ export default function ProductsPage() {
       deepLinkHandled.current = true;
       setSearch(styleParam);
       (async () => {
-        const { data } = await supabase
+        const { data } = await db
           .from('products')
           .select('*')
           .eq('style_number', styleParam)
           .limit(1)
           .maybeSingle();
         if (data) {
-          const { data: imgs } = await supabase
+          const { data: imgs } = await db
             .from('product_images')
             .select('product_id, image_url')
             .eq('product_id', data.product_id)
             .eq('sort_order', 0);
-          const { data: skuStats } = await supabase
+          const { data: skuStats } = await db
             .from('product_skus')
             .select('product_id, qty_avail_sell')
             .eq('product_id', data.product_id);
@@ -234,7 +234,7 @@ export default function ProductsPage() {
   }
 
   async function loadCategories() {
-    const { data } = await supabase
+    const { data } = await db
       .from('products')
       .select('category')
       .not('category', 'is', null)
@@ -250,7 +250,7 @@ export default function ProductsPage() {
   async function loadProducts() {
     setLoading(true);
 
-    let query = supabase
+    let query = db
       .from('products')
       .select('*', { count: 'exact' });
 
@@ -270,7 +270,7 @@ export default function ProductsPage() {
       const productIds = data.map(p => p.product_id);
 
       // Fetch first image for each
-      const { data: images } = await supabase
+      const { data: images } = await db
         .from('product_images')
         .select('product_id, image_url')
         .in('product_id', productIds)
@@ -280,7 +280,7 @@ export default function ProductsPage() {
       images?.forEach(img => { imageMap[img.product_id] = img.image_url; });
 
       // SKU counts + inventory
-      const { data: skuStats } = await supabase
+      const { data: skuStats } = await db
         .from('product_skus')
         .select('product_id, qty_avail_sell')
         .in('product_id', productIds);
@@ -311,7 +311,7 @@ export default function ProductsPage() {
     setDetailTab('overview');
 
     // Images
-    const { data: images } = await supabase
+    const { data: images } = await db
       .from('product_images')
       .select('image_url')
       .eq('product_id', product.product_id)
@@ -319,7 +319,7 @@ export default function ProductsPage() {
     setProductImages(images?.map(i => i.image_url) || []);
 
     // SKUs
-    const { data: skus } = await supabase
+    const { data: skus } = await db
       .from('product_skus')
       .select('*')
       .eq('product_id', product.product_id)
@@ -339,7 +339,7 @@ export default function ProductsPage() {
 
     const results: Record<string, any[]> = {};
     for (const table of childTables) {
-      const { data } = await supabase
+      const { data } = await db
         .from(table)
         .select('*')
         .eq('product_id', product.product_id);

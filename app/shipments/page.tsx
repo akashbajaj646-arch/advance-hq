@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import PrintButton from '@/components/PrintButton';
+import { generateShipmentPDF } from '@/lib/pdf-generator';
+import { db } from '@/lib/db';
 import { useDrawer } from '@/context/DrawerContext';
 
 const PAGE_SIZE = 20;
@@ -72,7 +74,7 @@ export default function ShipmentsPage() {
 
   async function loadShipments() {
     setLoading(true);
-    let query = supabase.from('shipments').select('*', { count: 'exact' });
+    let query = db.from('shipments').select('*', { count: 'exact' });
     if (search) query = query.or(`am_shipment_id.ilike.%${search}%,am_invoice_id.ilike.%${search}%,tracking_number.ilike.%${search}%,carrier_name.ilike.%${search}%,ship_to_name.ilike.%${search}%`);
     if (statusFilter) query = query.eq('shipment_status', statusFilter);
     const { data, count } = await query.order('ship_date', { ascending: false }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
@@ -82,7 +84,7 @@ export default function ShipmentsPage() {
 
   async function openDetail(shipment: any) {
     setSelected(shipment); setDetailTab('overview');
-    const { data } = await supabase.from('shipment_items').select('*').eq('shipment_id', shipment.id);
+    const { data } = await db.from('shipment_items').select('*').eq('shipment_id', shipment.id);
     setShipmentItems(data || []);
   }
 
@@ -142,7 +144,7 @@ export default function ShipmentsPage() {
                   {selected.tracking_number && <span className="text-sm text-blue-600">{selected.tracking_number}</span>}
                 </div>
               </div>
-              <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+              <div className="flex items-center gap-2"><PrintButton onDownload={() => generateShipmentPDF(selected, shipmentBoxes || [], 'download', [])} onPrint={() => generateShipmentPDF(selected, shipmentBoxes || [], 'print', [])} /><button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button></div>
             </div>
 
             <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">

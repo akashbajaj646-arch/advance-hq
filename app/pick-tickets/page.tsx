@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import PrintButton from '@/components/PrintButton';
+import { generatePickTicketPDF } from '@/lib/pdf-generator';
+import { db } from '@/lib/db';
 import { useDrawer } from '@/context/DrawerContext';
 
 const PAGE_SIZE = 20;
@@ -76,7 +78,7 @@ export default function PickTicketsPage() {
 
   async function loadPTs() {
     setLoading(true);
-    let query = supabase.from('pick_tickets').select('*', { count: 'exact' });
+    let query = db.from('pick_tickets').select('*', { count: 'exact' });
     if (search) query = query.or(`pick_ticket_id.ilike.%${search}%,customer_name.ilike.%${search}%,apparel_magic_order_id.ilike.%${search}%,invoice_id.ilike.%${search}%`);
     if (wmsFilter) query = query.eq('wms_status', wmsFilter);
     const { data, count } = await query.order('pick_ticket_date', { ascending: false }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
@@ -86,10 +88,10 @@ export default function PickTicketsPage() {
 
   async function openDetail(pt: any) {
     setSelected(pt); setDetailTab('overview');
-    const { data } = await supabase.from('pick_ticket_items').select('*').eq('pick_ticket_id', pt.pick_ticket_id);
+    const { data } = await db.from('pick_ticket_items').select('*').eq('pick_ticket_id', pt.pick_ticket_id);
     setPtItems(data || []);
     if (pt.invoice_id) {
-      const { data: ships } = await supabase.from('shipments').select('am_shipment_id, shipstation_id, ship_date, tracking_number, carrier_name, shipment_status, qty, qty_boxes, am_invoice_id').eq('am_invoice_id', pt.invoice_id);
+      const { data: ships } = await db.from('shipments').select('am_shipment_id, shipstation_id, ship_date, tracking_number, carrier_name, shipment_status, qty, qty_boxes, am_invoice_id').eq('am_invoice_id', pt.invoice_id);
       setRelShipments(ships || []);
     } else { setRelShipments([]); }
   }
@@ -154,7 +156,7 @@ export default function PickTicketsPage() {
                   <span className="text-sm font-medium">${parseFloat(selected.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                 </div>
               </div>
-              <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+              <div className="flex items-center gap-2"><PrintButton onDownload={() => generatePickTicketPDF(selected, ptItems, 'download', [])} onPrint={() => generatePickTicketPDF(selected, ptItems, 'print', [])} /><button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button></div>
             </div>
 
             <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">
@@ -180,7 +182,7 @@ export default function PickTicketsPage() {
               </div>
             )}
 
-            {detailTab === 'items' && (<div className="overflow-x-auto">{ptItems.length === 0 ? <p className="text-gray-400 text-center py-8">No items</p> : (<table className="w-full text-sm"><thead><tr className="bg-gray-50 border-b border-gray-200"><th className="px-3 py-2 text-left font-medium text-gray-500">Style</th><th className="px-3 py-2 text-left font-medium text-gray-500">Color</th><th className="px-3 py-2 text-left font-medium text-gray-500">Size</th><th className="px-3 py-2 text-right font-medium text-gray-500">Qty</th><th className="px-3 py-2 text-right font-medium text-gray-500">Price</th><th className="px-3 py-2 text-left font-medium text-gray-500">Location</th><th className="px-3 py-2 text-right font-medium text-gray-500">Amount</th></tr></thead><tbody>{ptItems.map((item, i) => (<tr key={i} className="border-b border-gray-100"><td className="px-3 py-2 font-medium">{item.style_number || '-'}</td><td className="px-3 py-2">{item.color || item.attr_2 || '-'}</td><td className="px-3 py-2">{item.size || '-'}</td><td className="px-3 py-2 text-right">{item.quantity || item.qty || 0}</td><td className="px-3 py-2 text-right">${(item.unit_price || 0).toFixed(2)}</td><td className="px-3 py-2 font-medium text-gray-700">{item.location || '-'}</td><td className="px-3 py-2 text-right">${(item.line_total || item.amount || 0).toFixed(2)}</td></tr>))}</tbody></table>)}</div>)}
+            {detailTab === 'items' && (<div className="overflow-x-auto">{ptItems.length === 0 ? <p className="text-gray-400 text-center py-8">No items</p> : (<table className="w-full text-sm"><thead><tr className="bg-gray-50 border-b border-gray-200"><th className="px-3 py-2 text-left font-medium text-gray-500">Style</th><th className="px-3 py-2 text-left font-medium text-gray-500">Color</th><th className="px-3 py-2 text-left font-medium text-gray-500">Size</th><th className="px-3 py-2 text-right font-medium text-gray-500">Qty</th><th className="px-3 py-2 text-right font-medium text-gray-500">Price</th><th className="px-3 py-2 text-left font-medium text-gray-500">Location</th><th className="px-3 py-2 text-left font-medium text-gray-500">Bin Location</th><th className="px-3 py-2 text-right font-medium text-gray-500">Amount</th></tr></thead><tbody>{ptItems.map((item, i) => (<tr key={i} className="border-b border-gray-100"><td className="px-3 py-2 font-medium">{item.style_number || '-'}</td><td className="px-3 py-2">{item.color || item.attr_2 || '-'}</td><td className="px-3 py-2">{item.size || '-'}</td><td className="px-3 py-2 text-right">{item.quantity || item.qty || 0}</td><td className="px-3 py-2 text-right">${(item.unit_price || 0).toFixed(2)}</td><td className="px-3 py-2 font-medium text-gray-700">{item.location || '-'}</td><td className="px-3 py-2 text-gray-600">{item.bin_location || '-'}</td><td className="px-3 py-2 text-right">${(item.line_total || item.amount || 0).toFixed(2)}</td></tr>))}</tbody></table>)}</div>)}
 
             {detailTab === 'ships' && (<div className="overflow-x-auto">{relShipments.length === 0 ? <p className="text-gray-400 text-center py-8">No shipments</p> : (<table className="w-full text-sm"><thead><tr className="bg-gray-50 border-b border-gray-200"><th className="px-3 py-2 text-left font-medium text-gray-500">Shipment</th><th className="px-3 py-2 text-left font-medium text-gray-500">Date</th><th className="px-3 py-2 text-right font-medium text-gray-500">Qty</th><th className="px-3 py-2 text-left font-medium text-gray-500">Carrier</th><th className="px-3 py-2 text-left font-medium text-gray-500">Tracking</th></tr></thead><tbody>{relShipments.map((s, i) => (<tr key={i} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => openDrawer('shipment', s.am_shipment_id || s.shipstation_id)}><td className="px-3 py-2 font-medium text-brand-600 hover:underline">{s.am_shipment_id || s.shipstation_id || '-'}</td><td className="px-3 py-2">{s.ship_date || '-'}</td><td className="px-3 py-2 text-right">{s.qty || 0}</td><td className="px-3 py-2 text-gray-500">{s.carrier_name || '-'}</td><td className="px-3 py-2 text-xs text-blue-600">{s.tracking_number || '-'}</td></tr>))}</tbody></table>)}</div>)}
           </div></div>

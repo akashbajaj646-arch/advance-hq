@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 import { useDrawer } from '@/context/DrawerContext';
 
 const PAGE_SIZE = 20;
@@ -116,15 +116,15 @@ export default function CustomersPage() {
   function toggleColumn(key: string) { const next = visibleColumns.includes(key) ? visibleColumns.filter(c => c !== key) : [...visibleColumns, key]; saveColumns(next); }
 
   async function loadFilters() {
-    const { data: cats } = await supabase.from('customers').select('category').not('category', 'is', null).not('category', 'eq', '');
+    const { data: cats } = await db.from('customers').select('category').not('category', 'is', null).not('category', 'eq', '');
     if (cats) { const u = [...new Set(cats.map(d => d.category).filter(Boolean))] as string[]; u.sort(); setCategories(u); }
-    const { data: sts } = await supabase.from('customers').select('state').not('state', 'is', null).not('state', 'eq', '');
+    const { data: sts } = await db.from('customers').select('state').not('state', 'is', null).not('state', 'eq', '');
     if (sts) { const u = [...new Set(sts.map(d => d.state).filter(Boolean))] as string[]; u.sort(); setStates(u); }
   }
 
   async function loadCustomers() {
     setLoading(true);
-    let query = supabase.from('customers').select('*', { count: 'exact' });
+    let query = db.from('customers').select('*', { count: 'exact' });
     if (search) query = query.or(`customer_name.ilike.%${search}%,email.ilike.%${search}%,account_number.ilike.%${search}%,phone.ilike.%${search}%,city.ilike.%${search}%`);
     if (categoryFilter) query = query.eq('category', categoryFilter);
     if (stateFilter) query = query.eq('state', stateFilter);
@@ -136,13 +136,13 @@ export default function CustomersPage() {
   async function openDetail(customer: any) {
     setSelected(customer);
     setDetailTab('overview');
-    const { count: oc } = await supabase.from('orders').select('*', { count: 'exact', head: true }).eq('apparel_magic_customer_id', customer.am_customer_id);
+    const { count: oc } = await db.from('orders').select('*', { count: 'exact', head: true }).eq('apparel_magic_customer_id', customer.am_customer_id);
     setOrderCount(oc || 0);
-    const { count: ic } = await supabase.from('invoices').select('*', { count: 'exact', head: true }).eq('apparel_magic_customer_id', customer.am_customer_id);
+    const { count: ic } = await db.from('invoices').select('*', { count: 'exact', head: true }).eq('apparel_magic_customer_id', customer.am_customer_id);
     setInvoiceCount(ic || 0);
-    const { data: ro } = await supabase.from('orders').select('order_number, apparel_magic_id, order_date, total_amount, order_status, customer_name, qty, qty_shipped, season').eq('apparel_magic_customer_id', customer.am_customer_id).order('order_date', { ascending: false }).limit(20);
+    const { data: ro } = await db.from('orders').select('order_number, apparel_magic_id, order_date, total_amount, order_status, customer_name, qty, qty_shipped, season').eq('apparel_magic_customer_id', customer.am_customer_id).order('order_date', { ascending: false }).limit(20);
     setRecentOrders(ro || []);
-    const { data: ri } = await supabase.from('invoices').select('invoice_number, apparel_magic_id, apparel_magic_order_id, invoice_date, total_amount, balance_due, payment_status, season').eq('apparel_magic_customer_id', customer.am_customer_id).order('invoice_date', { ascending: false }).limit(20);
+    const { data: ri } = await db.from('invoices').select('invoice_number, apparel_magic_id, apparel_magic_order_id, invoice_date, total_amount, balance_due, payment_status, season').eq('apparel_magic_customer_id', customer.am_customer_id).order('invoice_date', { ascending: false }).limit(20);
     setRecentInvoices(ri || []);
   }
 

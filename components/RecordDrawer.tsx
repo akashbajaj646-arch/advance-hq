@@ -1,6 +1,8 @@
 'use client';
 
 import { useDrawer, EntityType } from '@/context/DrawerContext';
+import PrintButton from '@/components/PrintButton';
+import { generateOrderPDF, generateInvoicePDF, generatePickTicketPDF, generateShipmentPDF } from '@/lib/pdf-generator';
 import { useRouter } from 'next/navigation';
 
 // ── Clickable entity link component ──
@@ -443,6 +445,7 @@ function PTItemsTable({ items }: { items: any[] }) {
         <th className="px-3 py-2 text-left font-medium text-gray-500">Color</th>
         <th className="px-3 py-2 text-left font-medium text-gray-500">Size</th>
         <th className="px-3 py-2 text-left font-medium text-gray-500">Location</th>
+        <th className="px-3 py-2 text-left font-medium text-gray-500">Bin Location</th>
         <th className="px-3 py-2 text-right font-medium text-gray-500">Qty</th>
         <th className="px-3 py-2 text-right font-medium text-gray-500">Price</th>
         <th className="px-3 py-2 text-right font-medium text-gray-500">Amount</th>
@@ -454,6 +457,7 @@ function PTItemsTable({ items }: { items: any[] }) {
           <td className="px-3 py-2">{item.attr_2 || '-'}</td>
           <td className="px-3 py-2">{item.size || '-'}</td>
           <td className="px-3 py-2 font-medium text-gray-700">{item.location || '-'}</td>
+          <td className="px-3 py-2 text-gray-600">{item.bin_location || '-'}</td>
           <td className="px-3 py-2 text-right">{item.qty || 0}</td>
           <td className="px-3 py-2 text-right">${(item.unit_price || 0).toFixed(2)}</td>
           <td className="px-3 py-2 text-right">${(item.amount || 0).toFixed(2)}</td>
@@ -529,7 +533,7 @@ export default function RecordDrawer() {
                 )}
               </div>
             </div>
-            <button onClick={close} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+            <div className="flex items-center gap-2">{(current.type === 'order' || current.type === 'invoice' || current.type === 'pick_ticket' || current.type === 'shipment') && (<PrintButton onDownload={() => { const r = current.record; const c = current.childData; if (current.type === 'order') generateOrderPDF(r, c?.items || [], 'download', []); else if (current.type === 'invoice') generateInvoicePDF(r, c?.items || [], 'download', []); else if (current.type === 'pick_ticket') generatePickTicketPDF(r, c?.items || [], 'download', []); else if (current.type === 'shipment') generateShipmentPDF(r, c?.boxes || [], 'download', []); }} onPrint={() => { const r = current.record; const c = current.childData; if (current.type === 'order') generateOrderPDF(r, c?.items || [], 'print', []); else if (current.type === 'invoice') generateInvoicePDF(r, c?.items || [], 'print', []); else if (current.type === 'pick_ticket') generatePickTicketPDF(r, c?.items || [], 'print', []); else if (current.type === 'shipment') generateShipmentPDF(r, c?.boxes || [], 'print', []); }} />)}<button onClick={close} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button></div>
           </div>
 
           {/* Detail content */}

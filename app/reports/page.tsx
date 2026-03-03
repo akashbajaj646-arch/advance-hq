@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -62,8 +62,8 @@ export default function ReportsPage() {
   useEffect(() => { if (yearFilter) loadCurrentReport(); }, [yearFilter, activeReport]);
 
   async function loadAvailableYears() {
-    const { data } = await supabase.from('invoices').select('invoice_date').not('invoice_date', 'is', null).order('invoice_date', { ascending: false }).limit(1);
-    const { data: earliest } = await supabase.from('invoices').select('invoice_date').not('invoice_date', 'is', null).order('invoice_date', { ascending: true }).limit(1);
+    const { data } = await db.from('invoices').select('invoice_date').not('invoice_date', 'is', null).order('invoice_date', { ascending: false }).limit(1);
+    const { data: earliest } = await db.from('invoices').select('invoice_date').not('invoice_date', 'is', null).order('invoice_date', { ascending: true }).limit(1);
     if (data?.[0] && earliest?.[0]) {
       const ly = new Date(data[0].invoice_date).getFullYear();
       const ey = new Date(earliest[0].invoice_date).getFullYear();
@@ -78,22 +78,22 @@ export default function ReportsPage() {
     setLoading(true);
     const year = parseInt(yearFilter);
     if (activeReport === 'sales' && !salesData) {
-      const { data } = await supabase.rpc('get_sales_report', { report_year: year });
+      const { data } = await db.rpc('get_sales_report', { report_year: year });
       setSalesData(data);
     } else if (activeReport === 'sales') {
-      const { data } = await supabase.rpc('get_sales_report', { report_year: year });
+      const { data } = await db.rpc('get_sales_report', { report_year: year });
       setSalesData(data);
     }
     if (activeReport === 'product') {
-      const { data } = await supabase.rpc('get_product_report', { report_year: year });
+      const { data } = await db.rpc('get_product_report', { report_year: year });
       setProductData(data);
     }
     if (activeReport === 'inventory') {
-      const { data } = await supabase.rpc('get_inventory_ar_report');
+      const { data } = await db.rpc('get_inventory_ar_report');
       setInventoryData(data);
     }
     if (activeReport === 'customer') {
-      const { data } = await supabase.rpc('get_customer_report', { report_year: year });
+      const { data } = await db.rpc('get_customer_report', { report_year: year });
       setCustomerData(data);
     }
     setLoading(false);

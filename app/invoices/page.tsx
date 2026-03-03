@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import PrintButton from '@/components/PrintButton';
+import { generateInvoicePDF } from '@/lib/pdf-generator';
+import { db } from '@/lib/db';
 import { useDrawer } from '@/context/DrawerContext';
 
 const PAGE_SIZE = 20;
@@ -84,7 +86,7 @@ export default function InvoicesPage() {
 
   async function loadInvoices() {
     setLoading(true);
-    let query = supabase.from('invoices').select('*', { count: 'exact' });
+    let query = db.from('invoices').select('*', { count: 'exact' });
     if (search) query = query.or(`invoice_number.ilike.%${search}%,customer_name.ilike.%${search}%,apparel_magic_order_id.ilike.%${search}%,po_number.ilike.%${search}%`);
     if (paymentFilter) query = query.eq('payment_status', paymentFilter);
     const { data, count } = await query.order('invoice_date', { ascending: false }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
@@ -94,11 +96,11 @@ export default function InvoicesPage() {
 
   async function openDetail(invoice: any) {
     setSelected(invoice); setDetailTab('overview');
-    const { data } = await supabase.from('invoice_items').select('*').eq('apparel_magic_invoice_id', invoice.apparel_magic_id);
+    const { data } = await db.from('invoice_items').select('*').eq('apparel_magic_invoice_id', invoice.apparel_magic_id);
     setInvoiceItems(data || []);
-    const { data: pts } = await supabase.from('pick_tickets').select('pick_ticket_id, invoice_id, pick_ticket_date, qty, total_amount, wms_status, carton_status, is_void').eq('invoice_id', invoice.invoice_number);
+    const { data: pts } = await db.from('pick_tickets').select('pick_ticket_id, invoice_id, pick_ticket_date, qty, total_amount, wms_status, carton_status, is_void').eq('invoice_id', invoice.invoice_number);
     setRelPTs(pts || []);
-    const { data: ships } = await supabase.from('shipments').select('am_shipment_id, shipstation_id, ship_date, tracking_number, carrier_name, shipment_status, qty, qty_boxes, am_invoice_id').eq('am_invoice_id', invoice.invoice_number);
+    const { data: ships } = await db.from('shipments').select('am_shipment_id, shipstation_id, ship_date, tracking_number, carrier_name, shipment_status, qty, qty_boxes, am_invoice_id').eq('am_invoice_id', invoice.invoice_number);
     setRelShipments(ships || []);
   }
 
@@ -161,7 +163,7 @@ export default function InvoicesPage() {
                   {parseFloat(selected.balance_due || 0) > 0 && <span className="text-sm text-red-600">Bal: ${parseFloat(selected.balance_due).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>}
                 </div>
               </div>
-              <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+              <div className="flex items-center gap-2"><PrintButton onDownload={() => generateInvoicePDF(selected, invoiceItems, 'download', [])} onPrint={() => generateInvoicePDF(selected, invoiceItems, 'print', [])} /><button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button></div>
             </div>
 
             <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">

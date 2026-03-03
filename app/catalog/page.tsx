@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 
 interface CatalogProduct {
   product_id: string;
@@ -44,7 +44,7 @@ export default function CatalogPage() {
   }, [page, search, categoryFilter]);
 
   async function loadCategories() {
-    const { data } = await supabase
+    const { data } = await db
       .from('products')
       .select('category')
       .not('category', 'is', null)
@@ -60,7 +60,7 @@ export default function CatalogPage() {
   async function loadProducts() {
     setLoading(true);
 
-    let query = supabase
+    let query = db
       .from('products')
       .select('*', { count: 'exact' });
 
@@ -80,7 +80,7 @@ export default function CatalogPage() {
       const productIds = data.map(p => p.product_id);
 
       // Get first image for each product
-      const { data: images } = await supabase
+      const { data: images } = await db
         .from('product_images')
         .select('product_id, image_url')
         .in('product_id', productIds)
@@ -92,7 +92,7 @@ export default function CatalogPage() {
       });
 
       // Get image counts
-      const { data: allImages } = await supabase
+      const { data: allImages } = await db
         .from('product_images')
         .select('product_id')
         .in('product_id', productIds);
@@ -103,7 +103,7 @@ export default function CatalogPage() {
       });
 
       // Get unique color counts
-      const { data: skuData } = await supabase
+      const { data: skuData } = await db
         .from('product_skus')
         .select('product_id, attr_2')
         .in('product_id', productIds);
@@ -132,7 +132,7 @@ export default function CatalogPage() {
     setSelectedProduct(product);
     setActiveImage(0);
 
-    const { data: images } = await supabase
+    const { data: images } = await db
       .from('product_images')
       .select('image_url')
       .eq('product_id', product.product_id)
@@ -140,7 +140,7 @@ export default function CatalogPage() {
 
     setProductImages(images?.map(i => i.image_url) || []);
 
-    const { data: skus } = await supabase
+    const { data: skus } = await db
       .from('product_skus')
       .select('*')
       .eq('product_id', product.product_id)

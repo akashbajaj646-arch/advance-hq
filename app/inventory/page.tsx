@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 
 const PAGE_SIZE = 20;
 
@@ -62,7 +62,8 @@ const COLUMN_GROUPS: Record<string, { label: string; columns: { key: string; lab
       { key: 'sku_concat', label: 'SKU Concat' },
       { key: 'sku_alt', label: 'Alt SKU' },
       { key: 'analysis_code', label: 'Analysis Code' },
-      { key: 'location', label: 'Location' },
+      { key: 'location', label: 'Warehouse' },
+      { key: 'bin_location', label: 'Bin Location' },
       { key: 'weight', label: 'Weight' },
       { key: 'nrf_size', label: 'NRF Size' },
       { key: 'web_title', label: 'Web Title' },
@@ -97,7 +98,7 @@ const COLUMN_GROUPS: Record<string, { label: string; columns: { key: string; lab
   },
 };
 
-const DEFAULT_COLUMNS = ['style_number', 'description', 'attr_2', 'size', 'qty_inventory', 'qty_avail_sell', 'qty_alloc', 'qty_open_sales', 'qty_open_po', 'cost', 'active'];
+const DEFAULT_COLUMNS = ['style_number', 'description', 'attr_2', 'size', 'bin_location', 'qty_inventory', 'qty_avail_sell', 'qty_alloc', 'qty_open_sales', 'qty_open_po', 'cost', 'active'];
 const STORAGE_KEY = 'advancehq-inventory-columns';
 
 function getStoredColumns(): string[] {
@@ -148,7 +149,7 @@ export default function InventoryPage() {
 
   async function loadInventory() {
     setLoading(true);
-    let query = supabase.from('inventory').select('*', { count: 'exact' });
+    let query = db.from('inventory').select('*', { count: 'exact' });
     if (search) query = query.or(`style_number.ilike.%${search}%,description.ilike.%${search}%,attr_2.ilike.%${search}%,upc_display.ilike.%${search}%,sku_concat.ilike.%${search}%,sku_alt.ilike.%${search}%`);
     if (activeFilter === 'active') query = query.eq('active', true);
     else if (activeFilter === 'inactive') query = query.eq('active', false);
@@ -164,7 +165,7 @@ export default function InventoryPage() {
     history: { label: 'History', fields: ['qty_invoiced', 'qty_received', 'qty_returned', 'qty_credited', 'qty_issued', 'qty_authorized_to_return', 'qty_required_comp', 'qty_required_bundles'] },
     pricing: { label: 'Pricing', fields: ['price', 'retail_price', 'cost', 'cost_base', 'cost_mfg', 'cost_historical_wa', 'cost_historical_wa_old', 'vendor_cost_base', 'price_offset', 'retail_price_offset', 'cost_offset', 'vendor_cost_offset'] },
     identity: { label: 'Identity', fields: ['sku_id', 'product_id', 'style_number', 'description', 'attr_2', 'attr_3', 'size', 'size_position', 'sku_concat', 'attr_2_name', 'attr_3_name', 'product_attribute_id'] },
-    codes: { label: 'Codes & IDs', fields: ['upc_display', 'upc_11', 'sku', 'sku_alt', 'nrf_size', 'attr_2_nrf_id', 'analysis_code', 'location', 'web_title', 'weight', 'weight_offset'] },
+    codes: { label: 'Codes & IDs', fields: ['upc_display', 'upc_11', 'sku', 'sku_alt', 'nrf_size', 'attr_2_nrf_id', 'analysis_code', 'location', 'bin_location', 'web_title', 'weight', 'weight_offset'] },
     flags: { label: 'Flags', fields: ['active', 'is_inventory_tracked', 'is_product', 'is_component', 'is_bundle', 'joor_sync'] },
     reorder: { label: 'Reorder', fields: ['qty_min_reorder', 'qty_min_inventory'] },
     shopify: { label: 'Shopify', fields: ['shopify_compare_at_price_wholesale', 'shopify_retail_compare_at_price'] },

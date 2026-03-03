@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import PrintButton from '@/components/PrintButton';
+import { generateOrderPDF } from '@/lib/pdf-generator';
+import { db } from '@/lib/db';
 import { useDrawer } from '@/context/DrawerContext';
 
 const PAGE_SIZE = 20;
@@ -87,7 +89,7 @@ export default function OrdersPage() {
 
   async function loadOrders() {
     setLoading(true);
-    let query = supabase.from('orders').select('*', { count: 'exact' });
+    let query = db.from('orders').select('*', { count: 'exact' });
     if (search) query = query.or(`order_number.ilike.%${search}%,customer_name.ilike.%${search}%,po_number.ilike.%${search}%,apparel_magic_customer_id.ilike.%${search}%`);
     if (statusFilter) query = query.eq('order_status', statusFilter);
     const { data, count } = await query.order('order_date', { ascending: false }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
@@ -97,14 +99,14 @@ export default function OrdersPage() {
 
   async function openDetail(order: any) {
     setSelected(order); setDetailTab('overview');
-    const { data } = await supabase.from('order_items').select('*').eq('apparel_magic_order_id', order.apparel_magic_id).order('style_number');
+    const { data } = await db.from('order_items').select('*').eq('apparel_magic_order_id', order.apparel_magic_id).order('style_number');
     setOrderItems(data || []);
-    const { data: invs } = await supabase.from('invoices').select('invoice_number, apparel_magic_id, invoice_date, total_amount, balance_due, payment_status, season').eq('apparel_magic_order_id', order.order_number).order('invoice_date', { ascending: false });
+    const { data: invs } = await db.from('invoices').select('invoice_number, apparel_magic_id, invoice_date, total_amount, balance_due, payment_status, season').eq('apparel_magic_order_id', order.order_number).order('invoice_date', { ascending: false });
     setRelInvoices(invs || []);
-    const { data: pts } = await supabase.from('pick_tickets').select('pick_ticket_id, invoice_id, pick_ticket_date, qty, total_amount, wms_status, carton_status, is_void').eq('apparel_magic_order_id', order.order_number).order('pick_ticket_date', { ascending: false });
+    const { data: pts } = await db.from('pick_tickets').select('pick_ticket_id, invoice_id, pick_ticket_date, qty, total_amount, wms_status, carton_status, is_void').eq('apparel_magic_order_id', order.order_number).order('pick_ticket_date', { ascending: false });
     setRelPTs(pts || []);
     if (invs && invs.length > 0) {
-      const { data: ships } = await supabase.from('shipments').select('am_shipment_id, shipstation_id, ship_date, tracking_number, carrier_name, shipment_status, qty, qty_boxes, am_invoice_id').in('am_invoice_id', invs.map((inv: any) => inv.invoice_number));
+      const { data: ships } = await db.from('shipments').select('am_shipment_id, shipstation_id, ship_date, tracking_number, carrier_name, shipment_status, qty, qty_boxes, am_invoice_id').in('am_invoice_id', invs.map((inv: any) => inv.invoice_number));
       setRelShipments(ships || []);
     } else { setRelShipments([]); }
   }
@@ -161,7 +163,7 @@ export default function OrdersPage() {
                     <span className="text-sm font-medium">${parseFloat(selected.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                   </div>
                 </div>
-                <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+                <div className="flex items-center gap-2"><PrintButton onDownload={() => generateOrderPDF(selected, orderItems, 'download', [])} onPrint={() => generateOrderPDF(selected, orderItems, 'print', [])} /><button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button></div>
               </div>
 
               <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">
