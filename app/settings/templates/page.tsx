@@ -66,7 +66,7 @@ export default function TemplatesPage() {
       const existingForType = templates.filter(t => t.entity_type === tmpl.entity_type);
       if (existingForType.length === 0) payload.is_default = true;
 
-      const { data, error } = await db.from('print_templates').insert({ ...payload, created_at: new Date().toISOString() }).select().single();
+      const { data, error } = await db.insert('print_templates', { ...payload, created_at: new Date().toISOString() });
       if (error) { setSaveMsg('Error: ' + error.message); }
       else { setSaveMsg('Template created'); setEditing({ ...tmpl, id: data.id }); await loadTemplates(); }
     }
