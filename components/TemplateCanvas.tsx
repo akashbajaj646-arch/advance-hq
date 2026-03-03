@@ -396,7 +396,7 @@ export default function TemplateCanvas({ template, onChange }: CanvasProps) {
                   <DraggableColumnList
                     allColumns={TABLE_COLUMNS[selected.tableSource || ''] || []}
                     activeColumns={selected.tableColumns || []}
-                    onChange={(cols) => updateBlock(selected.id, { tableColumns: cols })}
+                    onChange={(cols: any) => updateBlock(selected.id, { tableColumns: cols })}
                   />
                 </div>
                 <label className="flex items-center gap-1 mt-2 text-xs"><input type="checkbox" checked={selected.showTotals !== false} onChange={e => updateBlock(selected.id, { showTotals: e.target.checked })} className="rounded border-gray-300" /> Show totals row</label>
