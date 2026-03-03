@@ -21,7 +21,7 @@ export default function TemplatesPage() {
 
   async function loadTemplates() {
     setLoading(true);
-    const { data } = await supabase
+    const { data } = await db
       .from('print_templates')
       .select('*')
       .order('entity_type')
