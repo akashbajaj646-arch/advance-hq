@@ -163,7 +163,7 @@ export default function InvoicesPage() {
                   {parseFloat(selected.balance_due || 0) > 0 && <span className="text-sm text-red-600">Bal: ${parseFloat(selected.balance_due).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>}
                 </div>
               </div>
-              <div className="flex items-center gap-2"><PrintButton onDownload={() => generateInvoicePDF(selected, invoiceItems, 'download', [])} onPrint={() => generateInvoicePDF(selected, invoiceItems, 'print', [])} /><button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button></div>
+              <div className="flex items-center gap-2"><PrintButton entityType="invoice" onDownload={() => generateInvoicePDF(selected, invoiceItems, 'download', [])} onPrint={() => generateInvoicePDF(selected, invoiceItems, 'print', [])} /><button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button></div>
             </div>
 
             <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">

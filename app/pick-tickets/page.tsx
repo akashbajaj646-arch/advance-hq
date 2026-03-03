@@ -156,7 +156,7 @@ export default function PickTicketsPage() {
                   <span className="text-sm font-medium">${parseFloat(selected.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                 </div>
               </div>
-              <div className="flex items-center gap-2"><PrintButton onDownload={() => generatePickTicketPDF(selected, ptItems, 'download', [])} onPrint={() => generatePickTicketPDF(selected, ptItems, 'print', [])} /><button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button></div>
+              <div className="flex items-center gap-2"><PrintButton entityType="pick_ticket" onDownload={() => generatePickTicketPDF(selected, ptItems, 'download', [])} onPrint={() => generatePickTicketPDF(selected, ptItems, 'print', [])} /><button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button></div>
             </div>
 
             <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">
