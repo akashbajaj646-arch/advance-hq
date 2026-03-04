@@ -9,7 +9,7 @@ const supabaseAdmin = createClient(
 
 // Allowed tables — whitelist to prevent arbitrary table access
 const ALLOWED_TABLES = new Set([
-  'customers', 'customer_locations', 'contacts',
+  'customers', 'customer_locations', 'hq_contacts',
   'orders', 'order_items', 'invoices', 'invoice_items',
   'pick_tickets', 'pick_ticket_items', 'shipments', 'shipment_boxes',
   'shipment_box_items', 'shipment_pallets', 'shipment_items',

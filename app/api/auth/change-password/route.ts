@@ -21,7 +21,7 @@ export async function POST(request: Request) {
 
     // Get full user record with password hash
     const { data: user } = await supabaseAdmin
-      .from('app_users')
+      .from('hq_users')
       .select('id, password_hash')
       .eq('id', result.user.id)
       .single();
@@ -39,7 +39,7 @@ export async function POST(request: Request) {
     // Hash and save new password
     const newHash = await hashPassword(new_password);
     await supabaseAdmin
-      .from('app_users')
+      .from('hq_users')
       .update({ password_hash: newHash, updated_at: new Date().toISOString() })
       .eq('id', user.id);
 

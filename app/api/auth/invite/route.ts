@@ -17,7 +17,7 @@ export async function POST(request: Request) {
 
     // Check if user already exists
     const { data: existing } = await supabaseAdmin
-      .from('app_users')
+      .from('hq_users')
       .select('id')
       .eq('email', email.toLowerCase().trim())
       .single();
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
 
     // Check if invite already pending
     const { data: existingInvite } = await supabaseAdmin
-      .from('app_invites')
+      .from('hq_invites')
       .select('id')
       .eq('email', email.toLowerCase().trim())
       .is('accepted_at', null)
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
     expiresAt.setDate(expiresAt.getDate() + 7); // 7-day expiry
 
     const { data: invite, error } = await supabaseAdmin
-      .from('app_invites')
+      .from('hq_invites')
       .insert({
         email: email.toLowerCase().trim(),
         token,
@@ -82,7 +82,7 @@ export async function GET() {
     }
 
     const { data: invites } = await supabaseAdmin
-      .from('app_invites')
+      .from('hq_invites')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(50);

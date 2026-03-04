@@ -16,7 +16,7 @@ export async function POST(request: Request) {
 
     // Look up invite
     const { data: invite } = await supabaseAdmin
-      .from('app_invites')
+      .from('hq_invites')
       .select('*')
       .eq('token', token)
       .is('accepted_at', null)
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
 
     // Check if user already exists
     const { data: existing } = await supabaseAdmin
-      .from('app_users')
+      .from('hq_users')
       .select('id')
       .eq('email', invite.email)
       .single();
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     // Create user
     const passwordHash = await hashPassword(password);
     const { data: user, error } = await supabaseAdmin
-      .from('app_users')
+      .from('hq_users')
       .insert({
         email: invite.email,
         password_hash: passwordHash,
@@ -59,7 +59,7 @@ export async function POST(request: Request) {
 
     // Mark invite as accepted
     await supabaseAdmin
-      .from('app_invites')
+      .from('hq_invites')
       .update({ accepted_at: new Date().toISOString() })
       .eq('id', invite.id);
 

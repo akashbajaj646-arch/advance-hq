@@ -11,7 +11,7 @@ export async function GET() {
     }
 
     const { data: users } = await supabaseAdmin
-      .from('app_users')
+      .from('hq_users')
       .select('id, email, full_name, role, permissions, is_active, last_login_at, created_at')
       .order('created_at', { ascending: true });
 
@@ -45,7 +45,7 @@ export async function PATCH(request: Request) {
     if (is_active !== undefined) updates.is_active = is_active;
 
     const { error } = await supabaseAdmin
-      .from('app_users')
+      .from('hq_users')
       .update(updates)
       .eq('id', user_id);
 

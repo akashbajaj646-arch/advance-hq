@@ -11,7 +11,7 @@ export async function POST(request: Request) {
     }
 
     const { data: user } = await supabaseAdmin
-      .from('app_users')
+      .from('hq_users')
       .select('*')
       .eq('email', email.toLowerCase().trim())
       .eq('is_active', true)
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
 
     // Update last login
     await supabaseAdmin
-      .from('app_users')
+      .from('hq_users')
       .update({ last_login_at: new Date().toISOString() })
       .eq('id', user.id);
 

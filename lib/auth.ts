@@ -25,7 +25,7 @@ export async function getSession() {
 
   const { data: session } = await supabaseAdmin
     .from('app_sessions')
-    .select('*, user:app_users(*)')
+    .select('*, user:hq_users(*)')
     .eq('token', token)
     .gt('expires_at', new Date().toISOString())
     .single();
