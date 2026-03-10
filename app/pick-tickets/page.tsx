@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import PrintButton from '@/components/PrintButton';
 import { generatePickTicketPDF } from '@/lib/pdf-generator';
 import { db } from '@/lib/db';
@@ -57,6 +58,7 @@ function getColumnLabel(key: string): string {
 export default function PickTicketsPage() {
   const { open: openDrawer } = useDrawer();
   const [pts, setPTs] = useState<any[]>([]);
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [wmsFilter, setWmsFilter] = useState('');
@@ -125,11 +127,11 @@ export default function PickTicketsPage() {
         {loading ? <div className="text-center py-8 text-gray-500">Loading...</div> : pts.length === 0 ? <div className="text-center py-8 text-gray-500">No pick tickets found</div> : (
           <>
             <div className="overflow-x-auto"><table className="w-full"><thead><tr className="border-b border-gray-200">{visibleColumns.map(col => <th key={col} className="table-header pb-3 whitespace-nowrap">{getColumnLabel(col)}</th>)}</tr></thead><tbody>
-              {pts.map(pt => (<tr key={pt.id} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors" onClick={() => openDetail(pt)}>{visibleColumns.map(col => (<td key={col} className="table-cell text-sm max-w-[200px] truncate">
+              {pts.map(pt => (<tr key={pt.id} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors" onClick={() => router.push(`/pick-tickets/${pt.pick_ticket_id}`)}>{visibleColumns.map(col => (<td key={col} className="table-cell text-sm max-w-[200px] truncate">
                 {col === 'pick_ticket_id' ? <span className="font-medium text-brand-600">PT-{pt[col]}</span>
-                  : col === 'customer_name' ? <button onClick={(e) => { e.stopPropagation(); openDrawer('customer', pt.apparel_magic_customer_id); }} className="text-brand-600 hover:underline">{pt[col]}</button>
-                  : col === 'apparel_magic_order_id' && pt[col] ? <button onClick={(e) => { e.stopPropagation(); openDrawer('order', pt[col]); }} className="text-brand-600 hover:underline">{pt[col]}</button>
-                  : col === 'invoice_id' && pt[col] ? <button onClick={(e) => { e.stopPropagation(); openDrawer('invoice', pt[col]); }} className="text-brand-600 hover:underline">{pt[col]}</button>
+                  : col === 'customer_name' ? <button onClick={(e) => { e.stopPropagation(); router.push(`/customers/${pt.apparel_magic_customer_id}`); }} className="text-brand-600 hover:underline">{pt[col]}</button>
+                  : col === 'apparel_magic_order_id' && pt[col] ? <button onClick={(e) => { e.stopPropagation(); router.push(`/orders/${pt[col]}`); }} className="text-brand-600 hover:underline">{pt[col]}</button>
+                  : col === 'invoice_id' && pt[col] ? <button onClick={(e) => { e.stopPropagation(); router.push(`/invoices/${pt[col]}`); }} className="text-brand-600 hover:underline">{pt[col]}</button>
                   : col === 'wms_status' ? <span className={`px-2 py-0.5 rounded text-xs font-medium ${pt[col] === 'shipped' || pt[col] === 'completed' ? 'bg-green-100 text-green-700' : pt[col] === 'picked' ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700'}`}>{pt[col] || 'pending'}</span>
                   : fmt(col, pt[col])}
               </td>))}</tr>))}
@@ -146,9 +148,9 @@ export default function PickTicketsPage() {
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Pick Ticket #{selected.pick_ticket_id}</h2>
                 <p className="text-gray-500">
-                  <button onClick={() => openDrawer('customer', selected.apparel_magic_customer_id)} className="text-brand-600 hover:underline">{selected.customer_name || 'Unknown'}</button>
-                  {selected.apparel_magic_order_id ? <> · Order <button onClick={() => openDrawer('order', selected.apparel_magic_order_id)} className="text-brand-600 hover:underline">#{selected.apparel_magic_order_id}</button></> : ''}
-                  {selected.invoice_id ? <> · Invoice <button onClick={() => openDrawer('invoice', selected.invoice_id)} className="text-brand-600 hover:underline">#{selected.invoice_id}</button></> : ''}
+                  <button onClick={() => router.push(`/customers/${selected.apparel_magic_customer_id}`)} className="text-brand-600 hover:underline">{selected.customer_name || 'Unknown'}</button>
+                  {selected.apparel_magic_order_id ? <> · Order <button onClick={() => router.push(`/orders/${selected.apparel_magic_order_id}`)} className="text-brand-600 hover:underline">#{selected.apparel_magic_order_id}</button></> : ''}
+                  {selected.invoice_id ? <> · Invoice <button onClick={() => router.push(`/invoices/${selected.invoice_id}`)} className="text-brand-600 hover:underline">#{selected.invoice_id}</button></> : ''}
                 </p>
                 <div className="flex gap-3 mt-2">
                   <span className={`px-2 py-0.5 rounded text-xs font-medium ${selected.wms_status === 'shipped' || selected.wms_status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{selected.wms_status || 'pending'}</span>
@@ -173,9 +175,9 @@ export default function PickTicketsPage() {
                   const isOrder = field === 'apparel_magic_order_id';
                   const isInvoice = field === 'invoice_id';
                   return (<div key={field} className={`rounded-lg p-3 ${hasValue ? 'bg-gray-50' : 'bg-gray-50/50'}`}><p className="text-xs text-gray-400 mb-1">{getColumnLabel(field)}</p>
-                    {isCustomer && hasValue ? <button onClick={() => openDrawer('customer', field === 'customer_name' ? selected.apparel_magic_customer_id : String(value))} className="text-sm font-medium text-brand-600 hover:underline">{String(value)}</button>
-                    : isOrder && hasValue ? <button onClick={() => openDrawer('order', String(value))} className="text-sm font-medium text-brand-600 hover:underline">{String(value)}</button>
-                    : isInvoice && hasValue ? <button onClick={() => openDrawer('invoice', String(value))} className="text-sm font-medium text-brand-600 hover:underline">{String(value)}</button>
+                    {isCustomer && hasValue ? <button onClick={() => router.push(`/customers/${field === 'customer_name' ? selected.apparel_magic_customer_id : String(value)}`)} className="text-sm font-medium text-brand-600 hover:underline">{String(value)}</button>
+                    : isOrder && hasValue ? <button onClick={() => router.push(`/orders/${String(value)}`)} className="text-sm font-medium text-brand-600 hover:underline">{String(value)}</button>
+                    : isInvoice && hasValue ? <button onClick={() => router.push(`/invoices/${String(value)}`)} className="text-sm font-medium text-brand-600 hover:underline">{String(value)}</button>
                     : <p className={`text-sm font-medium ${hasValue ? 'text-gray-900' : 'text-gray-300'}`}>{fmt(field, value)}</p>}
                   </div>);
                 })}
@@ -184,7 +186,7 @@ export default function PickTicketsPage() {
 
             {detailTab === 'items' && (<div className="overflow-x-auto">{ptItems.length === 0 ? <p className="text-gray-400 text-center py-8">No items</p> : (<table className="w-full text-sm"><thead><tr className="bg-gray-50 border-b border-gray-200"><th className="px-3 py-2 text-left font-medium text-gray-500">Style</th><th className="px-3 py-2 text-left font-medium text-gray-500">Color</th><th className="px-3 py-2 text-left font-medium text-gray-500">Size</th><th className="px-3 py-2 text-right font-medium text-gray-500">Qty</th><th className="px-3 py-2 text-right font-medium text-gray-500">Price</th><th className="px-3 py-2 text-left font-medium text-gray-500">Location</th><th className="px-3 py-2 text-left font-medium text-gray-500">Bin Location</th><th className="px-3 py-2 text-right font-medium text-gray-500">Amount</th></tr></thead><tbody>{ptItems.map((item, i) => (<tr key={i} className="border-b border-gray-100"><td className="px-3 py-2 font-medium">{item.style_number || '-'}</td><td className="px-3 py-2">{item.color || item.attr_2 || '-'}</td><td className="px-3 py-2">{item.size || '-'}</td><td className="px-3 py-2 text-right">{item.quantity || item.qty || 0}</td><td className="px-3 py-2 text-right">${(item.unit_price || 0).toFixed(2)}</td><td className="px-3 py-2 font-medium text-gray-700">{item.location || '-'}</td><td className="px-3 py-2 text-gray-600">{item.bin_location || '-'}</td><td className="px-3 py-2 text-right">${(item.line_total || item.amount || 0).toFixed(2)}</td></tr>))}</tbody></table>)}</div>)}
 
-            {detailTab === 'ships' && (<div className="overflow-x-auto">{relShipments.length === 0 ? <p className="text-gray-400 text-center py-8">No shipments</p> : (<table className="w-full text-sm"><thead><tr className="bg-gray-50 border-b border-gray-200"><th className="px-3 py-2 text-left font-medium text-gray-500">Shipment</th><th className="px-3 py-2 text-left font-medium text-gray-500">Date</th><th className="px-3 py-2 text-right font-medium text-gray-500">Qty</th><th className="px-3 py-2 text-left font-medium text-gray-500">Carrier</th><th className="px-3 py-2 text-left font-medium text-gray-500">Tracking</th></tr></thead><tbody>{relShipments.map((s, i) => (<tr key={i} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => openDrawer('shipment', s.am_shipment_id || s.shipstation_id)}><td className="px-3 py-2 font-medium text-brand-600 hover:underline">{s.am_shipment_id || s.shipstation_id || '-'}</td><td className="px-3 py-2">{s.ship_date || '-'}</td><td className="px-3 py-2 text-right">{s.qty || 0}</td><td className="px-3 py-2 text-gray-500">{s.carrier_name || '-'}</td><td className="px-3 py-2 text-xs text-blue-600">{s.tracking_number || '-'}</td></tr>))}</tbody></table>)}</div>)}
+            {detailTab === 'ships' && (<div className="overflow-x-auto">{relShipments.length === 0 ? <p className="text-gray-400 text-center py-8">No shipments</p> : (<table className="w-full text-sm"><thead><tr className="bg-gray-50 border-b border-gray-200"><th className="px-3 py-2 text-left font-medium text-gray-500">Shipment</th><th className="px-3 py-2 text-left font-medium text-gray-500">Date</th><th className="px-3 py-2 text-right font-medium text-gray-500">Qty</th><th className="px-3 py-2 text-left font-medium text-gray-500">Carrier</th><th className="px-3 py-2 text-left font-medium text-gray-500">Tracking</th></tr></thead><tbody>{relShipments.map((s, i) => (<tr key={i} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => router.push(`/shipments/${s.am_shipment_id || s.shipstation_id}`)}><td className="px-3 py-2 font-medium text-brand-600 hover:underline">{s.am_shipment_id || s.shipstation_id || '-'}</td><td className="px-3 py-2">{s.ship_date || '-'}</td><td className="px-3 py-2 text-right">{s.qty || 0}</td><td className="px-3 py-2 text-gray-500">{s.carrier_name || '-'}</td><td className="px-3 py-2 text-xs text-blue-600">{s.tracking_number || '-'}</td></tr>))}</tbody></table>)}</div>)}
           </div></div>
         </div>
       )}

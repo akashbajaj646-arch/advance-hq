@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { db } from '@/lib/db';
 
 interface Product {
@@ -161,6 +161,7 @@ export default function ProductsPage() {
   const [categories, setCategories] = useState<string[]>([]);
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
+  const router = useRouter();
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [productImages, setProductImages] = useState<string[]>([]);
   const [productSkus, setProductSkus] = useState<any[]>([]);
@@ -499,7 +500,7 @@ export default function ProductsPage() {
                     <tr
                       key={product.product_id}
                       className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors"
-                      onClick={() => openProductDetail(product)}
+                      onClick={() => router.push(`/products/${product.style_number}`)}
                     >
                       <td className="table-cell">
                         {product._image_url ? (

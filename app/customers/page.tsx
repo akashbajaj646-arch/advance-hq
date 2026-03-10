@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { db } from '@/lib/db';
 import { useDrawer } from '@/context/DrawerContext';
 
@@ -91,6 +92,7 @@ function getColumnLabel(key: string): string {
 export default function CustomersPage() {
   const { open: openDrawer } = useDrawer();
   const [customers, setCustomers] = useState<any[]>([]);
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
@@ -226,7 +228,7 @@ export default function CustomersPage() {
                 </thead>
                 <tbody>
                   {customers.map(c => (
-                    <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors" onClick={() => openDetail(c)}>
+                    <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors" onClick={() => router.push(`/customers/${c.am_customer_id}`)}>
                       {visibleColumns.map(col => (
                         <td key={col} className="table-cell text-sm max-w-[200px] truncate">
                           {col === 'customer_name' ? <span className="font-medium text-brand-600">{c[col]}</span>
@@ -306,7 +308,7 @@ export default function CustomersPage() {
                       </tr></thead>
                       <tbody>
                         {recentOrders.map((o, i) => (
-                          <tr key={i} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => openDrawer('order', o.order_number)}>
+                          <tr key={i} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => router.push(`/orders/${o.order_number}`)}>
                             <td className="px-3 py-2 font-medium text-brand-600 hover:underline">{o.order_number}</td>
                             <td className="px-3 py-2">{o.order_date || '-'}</td>
                             <td className="px-3 py-2 text-right">${parseFloat(o.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
@@ -335,11 +337,11 @@ export default function CustomersPage() {
                       </tr></thead>
                       <tbody>
                         {recentInvoices.map((inv, i) => (
-                          <tr key={i} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => openDrawer('invoice', inv.invoice_number)}>
+                          <tr key={i} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => router.push(`/invoices/${inv.invoice_number}`)}>
                             <td className="px-3 py-2 font-medium text-brand-600 hover:underline">{inv.invoice_number}</td>
                             <td className="px-3 py-2">
                               {inv.apparel_magic_order_id ? (
-                                <button onClick={(e) => { e.stopPropagation(); openDrawer('order', inv.apparel_magic_order_id); }} className="text-brand-600 hover:underline">{inv.apparel_magic_order_id}</button>
+                                <button onClick={(e) => { e.stopPropagation(); router.push(`/orders/${inv.apparel_magic_order_id}`); }} className="text-brand-600 hover:underline">{inv.apparel_magic_order_id}</button>
                               ) : '-'}
                             </td>
                             <td className="px-3 py-2">{inv.invoice_date || '-'}</td>

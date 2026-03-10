@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import PrintButton from '@/components/PrintButton';
 import { generateShipmentPDF } from '@/lib/pdf-generator';
 import { db } from '@/lib/db';
@@ -54,6 +55,7 @@ function getColumnLabel(key: string): string {
 export default function ShipmentsPage() {
   const { open: openDrawer } = useDrawer();
   const [shipments, setShipments] = useState<any[]>([]);
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -115,9 +117,9 @@ export default function ShipmentsPage() {
         {loading ? <div className="text-center py-8 text-gray-500">Loading...</div> : shipments.length === 0 ? <div className="text-center py-8 text-gray-500">No shipments found</div> : (
           <>
             <div className="overflow-x-auto"><table className="w-full"><thead><tr className="border-b border-gray-200">{visibleColumns.map(col => <th key={col} className="table-header pb-3 whitespace-nowrap">{getColumnLabel(col)}</th>)}</tr></thead><tbody>
-              {shipments.map(s => (<tr key={s.id} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors" onClick={() => openDetail(s)}>{visibleColumns.map(col => (<td key={col} className="table-cell text-sm max-w-[200px] truncate">
+              {shipments.map(s => (<tr key={s.id} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors" onClick={() => router.push(`/shipments/${s.am_shipment_id || s.shipstation_id}`)}>{visibleColumns.map(col => (<td key={col} className="table-cell text-sm max-w-[200px] truncate">
                 {col === 'am_shipment_id' ? <span className="font-medium text-brand-600">{s[col] || s.shipstation_id || '-'}</span>
-                  : col === 'am_invoice_id' && s[col] ? <button onClick={(e) => { e.stopPropagation(); openDrawer('invoice', s[col]); }} className="text-brand-600 hover:underline">{s[col]}</button>
+                  : col === 'am_invoice_id' && s[col] ? <button onClick={(e) => { e.stopPropagation(); router.push(`/invoices/${s[col]}`); }} className="text-brand-600 hover:underline">{s[col]}</button>
                   : col === 'shipment_status' ? <span className={`px-2 py-0.5 rounded text-xs font-medium ${s[col] === 'shipped' || s[col] === 'delivered' ? 'bg-green-100 text-green-700' : s[col] === 'voided' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}`}>{s[col] || '-'}</span>
                   : col === 'tracking_number' && s[col] ? <span className="text-xs text-blue-600">{s[col]}</span>
                   : fmt(col, s[col])}
@@ -135,7 +137,7 @@ export default function ShipmentsPage() {
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Shipment {selected.am_shipment_id || selected.shipstation_id}</h2>
                 <p className="text-gray-500">
-                  {selected.am_invoice_id ? <>Invoice <button onClick={() => openDrawer('invoice', selected.am_invoice_id)} className="text-brand-600 hover:underline">#{selected.am_invoice_id}</button></> : 'No invoice linked'}
+                  {selected.am_invoice_id ? <>Invoice <button onClick={() => router.push(`/invoices/${selected.am_invoice_id}`)} className="text-brand-600 hover:underline">#{selected.am_invoice_id}</button></> : 'No invoice linked'}
                   {selected.carrier_name ? ` · ${selected.carrier_name}` : ''}
                 </p>
                 <div className="flex gap-3 mt-2">
@@ -158,7 +160,7 @@ export default function ShipmentsPage() {
                   const value = selected[field]; const hasValue = value !== null && value !== undefined && value !== '' && value !== 0 && value !== '0';
                   const isInvoice = field === 'am_invoice_id';
                   return (<div key={field} className={`rounded-lg p-3 ${hasValue ? 'bg-gray-50' : 'bg-gray-50/50'}`}><p className="text-xs text-gray-400 mb-1">{getColumnLabel(field)}</p>
-                    {isInvoice && hasValue ? <button onClick={() => openDrawer('invoice', String(value))} className="text-sm font-medium text-brand-600 hover:underline">{String(value)}</button>
+                    {isInvoice && hasValue ? <button onClick={() => router.push(`/invoices/${String(value)}`)} className="text-sm font-medium text-brand-600 hover:underline">{String(value)}</button>
                     : <p className={`text-sm font-medium ${hasValue ? 'text-gray-900' : 'text-gray-300'}`}>{fmt(field, value)}</p>}
                   </div>);
                 })}
