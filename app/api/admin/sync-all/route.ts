@@ -7,6 +7,22 @@ import { POST as syncInvoices } from '../sync-invoices/route';
 import { POST as syncShipments } from '../sync-shipments/route';
 import { POST as syncPickTickets } from '../sync-pick-tickets/route';
 
+async function safeRun(label: string, fn: () => Promise<Response>): Promise<any> {
+  try {
+    const res = await fn();
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      console.log(`   ⚠️ ${label} returned non-JSON:`, text.slice(0, 200));
+      return { error: `Non-JSON response: ${text.slice(0, 200)}` };
+    }
+  } catch (err) {
+    console.log(`   ❌ ${label} threw:`, err);
+    return { error: err instanceof Error ? err.message : 'Failed' };
+  }
+}
+
 export async function POST(request: Request) {
   const startTime = Date.now();
   const results: Record<string, any> = {};
@@ -14,74 +30,32 @@ export async function POST(request: Request) {
   console.log('🚀 Starting full data sync...\n');
 
   console.log('1️⃣ Syncing customers...');
-  try {
-    const res = await syncCustomers(new Request('http://localhost'));
-    results.customers = await res.json();
-    console.log('   ✅ Customers done\n');
-  } catch (err) {
-    results.customers = { error: err instanceof Error ? err.message : 'Failed' };
-    console.log('   ❌ Customers failed:', err, '\n');
-  }
+  results.customers = await safeRun('Customers', () => syncCustomers(new Request('http://localhost')));
+  console.log(results.customers?.error ? '   ❌ Customers failed\n' : '   ✅ Customers done\n');
 
   console.log('2️⃣ Syncing products...');
-  try {
-    const res = await syncProducts(new Request('http://localhost'));
-    results.products = await res.json();
-    console.log('   ✅ Products done\n');
-  } catch (err) {
-    results.products = { error: err instanceof Error ? err.message : 'Failed' };
-    console.log('   ❌ Products failed:', err, '\n');
-  }
+  results.products = await safeRun('Products', () => syncProducts(new Request('http://localhost')));
+  console.log(results.products?.error ? '   ❌ Products failed\n' : '   ✅ Products done\n');
 
   console.log('3️⃣ Syncing inventory...');
-  try {
-    const res = await syncInventory(new Request('http://localhost'));
-    results.inventory = await res.json();
-    console.log('   ✅ Inventory done\n');
-  } catch (err) {
-    results.inventory = { error: err instanceof Error ? err.message : 'Failed' };
-    console.log('   ❌ Inventory failed:', err, '\n');
-  }
+  results.inventory = await safeRun('Inventory', () => syncInventory(new Request('http://localhost')));
+  console.log(results.inventory?.error ? '   ❌ Inventory failed\n' : '   ✅ Inventory done\n');
 
   console.log('4️⃣ Syncing orders...');
-  try {
-    const res = await syncOrders(new Request('http://localhost'));
-    results.orders = await res.json();
-    console.log('   ✅ Orders done\n');
-  } catch (err) {
-    results.orders = { error: err instanceof Error ? err.message : 'Failed' };
-    console.log('   ❌ Orders failed:', err, '\n');
-  }
+  results.orders = await safeRun('Orders', () => syncOrders(new Request('http://localhost')));
+  console.log(results.orders?.error ? '   ❌ Orders failed\n' : '   ✅ Orders done\n');
 
   console.log('5️⃣ Syncing invoices...');
-  try {
-    const res = await syncInvoices(new Request('http://localhost'));
-    results.invoices = await res.json();
-    console.log('   ✅ Invoices done\n');
-  } catch (err) {
-    results.invoices = { error: err instanceof Error ? err.message : 'Failed' };
-    console.log('   ❌ Invoices failed:', err, '\n');
-  }
+  results.invoices = await safeRun('Invoices', () => syncInvoices(new Request('http://localhost')));
+  console.log(results.invoices?.error ? '   ❌ Invoices failed\n' : '   ✅ Invoices done\n');
 
   console.log('6️⃣ Syncing shipments from ShipStation...');
-  try {
-    const res = await syncShipments(new Request('http://localhost'));
-    results.shipments = await res.json();
-    console.log('   ✅ Shipments done\n');
-  } catch (err) {
-    results.shipments = { error: err instanceof Error ? err.message : 'Failed' };
-    console.log('   ❌ Shipments failed:', err, '\n');
-  }
+  results.shipments = await safeRun('Shipments', () => syncShipments(new Request('http://localhost')));
+  console.log(results.shipments?.error ? '   ❌ Shipments failed\n' : '   ✅ Shipments done\n');
 
   console.log('7️⃣ Syncing pick tickets...');
-  try {
-    const res = await syncPickTickets(new Request('http://localhost'));
-    results.pick_tickets = await res.json();
-    console.log('   ✅ Pick tickets done\n');
-  } catch (err) {
-    results.pick_tickets = { error: err instanceof Error ? err.message : 'Failed' };
-    console.log('   ❌ Pick tickets failed:', err, '\n');
-  }
+  results.pick_tickets = await safeRun('Pick tickets', () => syncPickTickets(new Request('http://localhost')));
+  console.log(results.pick_tickets?.error ? '   ❌ Pick tickets failed\n' : '   ✅ Pick tickets done\n');
 
   const totalDuration = Math.round((Date.now() - startTime) / 1000);
 
