@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const APPARELMAGIC_API_TOKEN = process.env.APPARELMAGIC_TOKEN || '';
@@ -31,7 +31,7 @@ async function fetchRecentPickTickets(sinceTimestamp: number) {
   let all: any[] = [];
   let lastId: string | null = null;
   let pageCount = 0;
-  const maxPages = 20;
+  const maxPages = 5;
 
   console.log(`Fetching pick tickets modified since ${new Date(sinceTimestamp * 1000).toISOString()}...`);
 
@@ -41,7 +41,7 @@ async function fetchRecentPickTickets(sinceTimestamp: number) {
       time: auth.time,
       token: auth.token,
       'pagination[page_size]': '200',
-      'filter[time_modified][gt]': String(sinceTimestamp),
+      
     });
     if (lastId) params.append('pagination[last_id]', lastId);
 
