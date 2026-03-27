@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+
+export const maxDuration = 300;
 import { POST as syncCustomers } from '../sync-customers/route';
 import { POST as syncProducts } from '../sync-products/route';
 import { POST as syncInventory } from '../sync-inventory/route';
