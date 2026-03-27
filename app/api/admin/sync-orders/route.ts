@@ -158,8 +158,8 @@ export async function POST(request: Request) {
       }).eq('id', syncLog.id);
     }
 
-    console.log(`✅ Order sync complete! Created: ${ordersCreated}, Updated: ${ordersUpdated}, Items: ${itemsCreated}, Duration: ${duration}s`);
-    return NextResponse.json({ success: true, stats: { total: orders.length, created: ordersCreated, updated: ordersUpdated, items: itemsCreated, errors, duration: `${duration}s` } });
+    console.log(`✅ Order sync complete! Created: ${ordersCreated}, Updated: ${ordersUpdated}, Duration: ${duration}s`);
+    return NextResponse.json({ success: true, stats: { total: orders.length, created: ordersCreated, updated: ordersUpdated, errors, duration: `${duration}s` } });
 
   } catch (error) {
     console.error('Order sync error:', error);
