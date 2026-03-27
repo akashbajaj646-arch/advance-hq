@@ -1,11 +1,6 @@
 import { NextResponse } from 'next/server';
-import { POST as syncCustomers } from '../sync-customers/route';
-import { POST as syncProducts } from '../sync-products/route';
-import { POST as syncInventory } from '../sync-inventory/route';
-import { POST as syncOrders } from '../sync-orders/route';
-import { POST as syncInvoices } from '../sync-invoices/route';
-import { POST as syncShipments } from '../sync-shipments/route';
-import { POST as syncPickTickets } from '../sync-pick-tickets/route';
+
+const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3003';
 
 export async function POST(request: Request) {
   const startTime = Date.now();
@@ -13,74 +8,81 @@ export async function POST(request: Request) {
 
   console.log('🚀 Starting full data sync...\n');
 
+  // 1. Sync Customers first (orders/invoices depend on them)
   console.log('1️⃣ Syncing customers...');
   try {
-    const res = await syncCustomers(new Request('http://localhost'));
-    results.customers = await res.json();
+    const customerRes = await fetch(`${BASE_URL}/api/admin/sync-customers`, { method: 'POST' });
+    results.customers = await customerRes.json();
     console.log('   ✅ Customers done\n');
   } catch (err) {
     results.customers = { error: err instanceof Error ? err.message : 'Failed' };
-    console.log('   ❌ Customers failed:', err, '\n');
+    console.log('   ❌ Customers failed\n');
   }
 
+  // 2. Sync Products
   console.log('2️⃣ Syncing products...');
   try {
-    const res = await syncProducts(new Request('http://localhost'));
-    results.products = await res.json();
+    const productRes = await fetch(`${BASE_URL}/api/admin/sync-products`, { method: 'POST' });
+    results.products = await productRes.json();
     console.log('   ✅ Products done\n');
   } catch (err) {
     results.products = { error: err instanceof Error ? err.message : 'Failed' };
-    console.log('   ❌ Products failed:', err, '\n');
+    console.log('   ❌ Products failed\n');
   }
 
+  // 3. Sync Inventory
   console.log('3️⃣ Syncing inventory...');
   try {
-    const res = await syncInventory(new Request('http://localhost'));
-    results.inventory = await res.json();
+    const inventoryRes = await fetch(`${BASE_URL}/api/admin/sync-inventory`, { method: 'POST' });
+    results.inventory = await inventoryRes.json();
     console.log('   ✅ Inventory done\n');
   } catch (err) {
     results.inventory = { error: err instanceof Error ? err.message : 'Failed' };
-    console.log('   ❌ Inventory failed:', err, '\n');
+    console.log('   ❌ Inventory failed\n');
   }
 
+  // 4. Sync Orders
   console.log('4️⃣ Syncing orders...');
   try {
-    const res = await syncOrders(new Request('http://localhost'));
-    results.orders = await res.json();
+    const orderRes = await fetch(`${BASE_URL}/api/admin/sync-orders`, { method: 'POST' });
+    results.orders = await orderRes.json();
     console.log('   ✅ Orders done\n');
   } catch (err) {
     results.orders = { error: err instanceof Error ? err.message : 'Failed' };
-    console.log('   ❌ Orders failed:', err, '\n');
+    console.log('   ❌ Orders failed\n');
   }
 
+  // 5. Sync Invoices
   console.log('5️⃣ Syncing invoices...');
   try {
-    const res = await syncInvoices(new Request('http://localhost'));
-    results.invoices = await res.json();
+    const invoiceRes = await fetch(`${BASE_URL}/api/admin/sync-invoices`, { method: 'POST' });
+    results.invoices = await invoiceRes.json();
     console.log('   ✅ Invoices done\n');
   } catch (err) {
     results.invoices = { error: err instanceof Error ? err.message : 'Failed' };
-    console.log('   ❌ Invoices failed:', err, '\n');
+    console.log('   ❌ Invoices failed\n');
   }
 
+  // 6. Sync Shipments from ShipStation
   console.log('6️⃣ Syncing shipments from ShipStation...');
   try {
-    const res = await syncShipments(new Request('http://localhost'));
-    results.shipments = await res.json();
+    const shipmentRes = await fetch(`${BASE_URL}/api/admin/sync-shipments`, { method: 'POST' });
+    results.shipments = await shipmentRes.json();
     console.log('   ✅ Shipments done\n');
   } catch (err) {
     results.shipments = { error: err instanceof Error ? err.message : 'Failed' };
-    console.log('   ❌ Shipments failed:', err, '\n');
+    console.log('   ❌ Shipments failed\n');
   }
 
+  // 7. Sync Pick Tickets
   console.log('7️⃣ Syncing pick tickets...');
   try {
-    const res = await syncPickTickets(new Request('http://localhost'));
-    results.pick_tickets = await res.json();
+    const ptRes = await fetch(`${BASE_URL}/api/admin/sync-pick-tickets`, { method: 'POST' });
+    results.pick_tickets = await ptRes.json();
     console.log('   ✅ Pick tickets done\n');
   } catch (err) {
     results.pick_tickets = { error: err instanceof Error ? err.message : 'Failed' };
-    console.log('   ❌ Pick tickets failed:', err, '\n');
+    console.log('   ❌ Pick tickets failed\n');
   }
 
   const totalDuration = Math.round((Date.now() - startTime) / 1000);
