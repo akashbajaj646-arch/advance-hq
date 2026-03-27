@@ -40,12 +40,20 @@ export default function SyncPage() {
 
   async function triggerSync(syncType: string) {
     setSyncing(syncType);
-    // Fire-and-forget: don't await the response, sync runs in background
+    // Fire-and-forget: don't await, sync runs in background
     fetch(`/api/admin/sync-${syncType}`, { method: 'POST' }).catch(() => {});
-    // Wait 3s then reload logs to show it started
-    await new Promise(r => setTimeout(r, 3000));
-    await loadSyncLogs();
-    setSyncing(null);
+
+    // Poll sync_log every 3s for up to 90s to show live progress
+    const started = Date.now();
+    const poll = async () => {
+      await loadSyncLogs();
+      if (Date.now() - started < 90000) {
+        setTimeout(poll, 3000);
+      } else {
+        setSyncing(null);
+      }
+    };
+    setTimeout(poll, 2000);
   }
 
   const syncButtons = [
