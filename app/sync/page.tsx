@@ -40,19 +40,11 @@ export default function SyncPage() {
 
   async function triggerSync(syncType: string) {
     setSyncing(syncType);
-    try {
-      const response = await fetch(`/api/admin/sync-${syncType}`, {
-        method: 'POST',
-      });
-      const text = await response.text();
-      let result;
-      try { result = JSON.parse(text); } catch { throw new Error(text.slice(0, 500)); }
-      console.log(`Sync ${syncType} result:`, result);
-      await loadSyncLogs();
-    } catch (error) {
-      console.error(`Sync ${syncType} error:`, error);
-      alert(`Sync failed: ${error}`);
-    }
+    // Fire-and-forget: don't await the response, sync runs in background
+    fetch(`/api/admin/sync-${syncType}`, { method: 'POST' }).catch(() => {});
+    // Wait 3s then reload logs to show it started
+    await new Promise(r => setTimeout(r, 3000));
+    await loadSyncLogs();
     setSyncing(null);
   }
 
