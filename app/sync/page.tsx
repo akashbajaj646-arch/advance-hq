@@ -44,7 +44,9 @@ export default function SyncPage() {
       const response = await fetch(`/api/admin/sync-${syncType}`, {
         method: 'POST',
       });
-      const result = await response.json();
+      const text = await response.text();
+      let result;
+      try { result = JSON.parse(text); } catch { throw new Error(text.slice(0, 500)); }
       console.log(`Sync ${syncType} result:`, result);
       await loadSyncLogs();
     } catch (error) {
