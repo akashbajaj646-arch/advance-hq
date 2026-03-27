@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { POST as sync } from '../../admin/sync-shipments/route';
 export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
 export async function GET() {
   console.log('⏰ Cron triggered: sync-shipments');
   try {
