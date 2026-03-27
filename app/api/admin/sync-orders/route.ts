@@ -41,6 +41,7 @@ async function fetchRecentOrders(sinceTimestamp: number) {
       time: auth.time,
       token: auth.token,
       'pagination[page_size]': '200',
+      'pagination[order]': 'desc',
       
     });
     if (lastId) params.append('pagination[last_id]', lastId);
