@@ -31,7 +31,7 @@ async function fetchRecentOrders(sinceTimestamp: number) {
   let all: any[] = [];
   let lastId: string | null = null;
   let pageCount = 0;
-  const maxPages = 5; // fetch ~1000 most recent orders
+  const maxPages = 3; // fetch ~1000 most recent orders
 
   console.log(`Fetching orders modified since ${new Date(sinceTimestamp * 1000).toISOString()}...`);
 
@@ -96,92 +96,57 @@ export async function POST(request: Request) {
     const customerMap: Record<string, string> = {};
     customers?.forEach(c => { customerMap[c.am_customer_id] = c.id; });
 
-    let ordersCreated = 0, ordersUpdated = 0, itemsCreated = 0, errors = 0;
+    let ordersCreated = 0, ordersUpdated = 0, errors = 0;
 
-    for (const order of orders) {
-      try {
-        const orderData: Record<string, any> = {
-          apparel_magic_id: order.order_id,
-          customer_id: customerMap[order.customer_id] || null,
-          apparel_magic_customer_id: order.customer_id,
-          order_number: order.order_id,
-          po_number: order.customer_po || null,
-          customer_po: order.customer_po || null,
-          order_status: order.status || (toNum(order.qty_shipped) ? 'shipped' : 'open'),
-          order_date: parseDate(order.date),
-          ship_date: parseDate(order.date_start),
-          cancel_date: parseDate(order.date_due),
-          customer_name: order.customer_name || null,
-          subtotal: toNum(order.amount_subtotal) || 0,
-          discount_amount: toNum(order.amount_discount) || 0,
-          shipping_amount: toNum(order.amount_freight) || 0,
-          tax_amount: toNum(order.amount_tax_total) || 0,
-          total_amount: toNum(order.amount) || 0,
-          amount_open: toNum(order.amount_open) || 0,
-          amount_shipped: toNum(order.amount_shipped) || 0,
-          qty: toNum(order.qty) || 0,
-          qty_open: toNum(order.qty_open) || 0,
-          qty_shipped: toNum(order.qty_shipped) || 0,
-          ship_to_name: order.name || order.customer_name || null,
-          ship_to_address_1: order.address_1 || null,
-          ship_to_city: order.city || null,
-          ship_to_state: order.state || null,
-          ship_to_zip: order.postal_code || null,
-          ship_to_country: order.country || null,
-          ship_via: order.ship_via || null,
-          warehouse_id: order.warehouse_id || null,
-          terms_id: order.terms_id || null,
-          division_id: order.division_id || null,
-          notes: order.notes || null,
-          sales_rep: order.salesperson || order.sales_rep || null,
-          shopify_id: order.shopify_id || null,
-          am_last_modified_time: order.time_modified ? new Date(order.time_modified * 1000).toISOString() : null,
-          am_time_modified: order.time_modified || null,
-          last_synced_at: new Date().toISOString()
-        };
+    // Batch upsert in chunks of 50
+    const batchSize = 50;
+    const orderRows = orders.map((order: any) => ({
+      apparel_magic_id: order.order_id,
+      customer_id: customerMap[order.customer_id] || null,
+      apparel_magic_customer_id: order.customer_id,
+      order_number: order.order_id,
+      po_number: order.customer_po || null,
+      customer_po: order.customer_po || null,
+      order_status: order.status || (toNum(order.qty_shipped) ? 'shipped' : 'open'),
+      order_date: parseDate(order.date),
+      ship_date: parseDate(order.date_start),
+      cancel_date: parseDate(order.date_due),
+      customer_name: order.customer_name || null,
+      subtotal: toNum(order.amount_subtotal) || 0,
+      total_amount: toNum(order.amount) || 0,
+      amount_open: toNum(order.amount_open) || 0,
+      amount_shipped: toNum(order.amount_shipped) || 0,
+      qty: toNum(order.qty) || 0,
+      qty_open: toNum(order.qty_open) || 0,
+      qty_shipped: toNum(order.qty_shipped) || 0,
+      ship_to_name: order.name || order.customer_name || null,
+      ship_to_address_1: order.address_1 || null,
+      ship_to_city: order.city || null,
+      ship_to_state: order.state || null,
+      ship_to_zip: order.postal_code || null,
+      ship_to_country: order.country || null,
+      ship_via: order.ship_via || null,
+      warehouse_id: order.warehouse_id || null,
+      terms_id: order.terms_id || null,
+      notes: order.notes || null,
+      sales_rep: order.salesperson || order.sales_rep || null,
+      shopify_id: order.shopify_id || null,
+      am_last_modified_time: order.time_modified ? new Date(order.time_modified * 1000).toISOString() : null,
+      last_synced_at: new Date().toISOString()
+    }));
 
-        const { data: existing } = await supabase.from('orders').select('id').eq('apparel_magic_id', order.order_id).single();
-        let orderId: string;
-
-        if (existing) {
-          await supabase.from('orders').update(orderData).eq('apparel_magic_id', order.order_id);
-          orderId = existing.id;
-          ordersUpdated++;
-        } else {
-          const { data: newOrder } = await supabase.from('orders').insert(orderData).select('id').single();
-          orderId = newOrder!.id;
-          ordersCreated++;
-        }
-
-        if (order.order_items && Array.isArray(order.order_items)) {
-          await supabase.from('order_items').delete().eq('apparel_magic_order_id', order.order_id);
-          for (const item of order.order_items) {
-            await supabase.from('order_items').insert({
-              apparel_magic_id: item.id,
-              order_id: orderId,
-              apparel_magic_order_id: order.order_id,
-              product_id: item.product_id,
-              sku_id: item.sku_id,
-              style_number: item.style_number,
-              description: item.description || null,
-              color: item.attr_2 || null,
-              attr_2: item.attr_2 || null,
-              size: item.size || null,
-              quantity_ordered: parseInt(item.qty) || 0,
-              qty: toNum(item.qty) || 0,
-              quantity_shipped: parseInt(item.qty_shipped) || 0,
-              unit_price: toNum(item.unit_price) || 0,
-              line_total: toNum(item.amount) || 0,
-              amount: toNum(item.amount) || 0,
-              last_synced_at: new Date().toISOString()
-            });
-            itemsCreated++;
-          }
-        }
-      } catch (err) {
-        console.error(`Error syncing order ${order.order_id}:`, err);
+    for (let i = 0; i < orderRows.length; i += batchSize) {
+      const batch = orderRows.slice(i, i + batchSize);
+      const { error } = await supabase
+        .from('orders')
+        .upsert(batch, { onConflict: 'apparel_magic_id' });
+      if (error) {
+        console.error('Batch upsert error:', error.message);
         errors++;
+      } else {
+        ordersCreated += batch.length;
       }
+      console.log(`Upserted ${Math.min(i + batchSize, orderRows.length)}/${orderRows.length} orders`);
     }
 
     const duration = Math.round((Date.now() - startTime) / 1000);
