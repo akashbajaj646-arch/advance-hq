@@ -18,7 +18,7 @@ const ALLOWED_TABLES = new Set([
   'product_tags', 'product_processes', 'product_royalties',
   'product_emblem_placements', 'product_buyer_filters',
   'custom_products', 'custom_product_images',
-  'inventory', 'print_templates', 'sync_log',
+  'inventory', 'print_templates', 'sync_log', 'customer_activity',
   'divisions', 'vendors', 'size_ranges',
   'portals', 'portal_items', 'portal_attachments',
   'change_requests', 'credit_memos', 'payments',
