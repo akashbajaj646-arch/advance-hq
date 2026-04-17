@@ -139,7 +139,7 @@ export default function CustomerDetailPage() {
       <div className="flex gap-1 border-b border-gray-200 mb-6">
         {tabs.map(t => (
           <button key={t.key} onClick={() => { setTab(t.key); if (t.key === 'activity' && customer?.email) loadActivity(customer.email); }} className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${tab === t.key ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            {t.label} <span className="text-gray-300 ml-1">({t.count})</span>
+            {t.label}{t.count !== undefined && <span className="text-gray-300 ml-1">({t.count})</span>}
           </button>
         ))}
       </div>
