@@ -236,47 +236,47 @@ export default function CustomerDetailPage() {
             </tbody>
           </table>
         )}
+
+        {tab === 'activity' && (
+          <div>
+            {activityLoading ? (
+              <div className="flex items-center justify-center py-12 text-gray-400">
+                <svg className="w-5 h-5 animate-spin mr-2" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                Loading activity...
+              </div>
+            ) : activityEvents.length === 0 ? (
+              <div className="text-center py-12">
+                <p className="text-gray-400">No website activity recorded for this customer yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {activityEvents.map((event: any) => {
+                  const icons: Record<string,string> = { page_view:'👀', product_view:'🛍️', collection_view:'📂', search:'🔍', cart_add:'🛒', order_placed:'✅', login:'🔐', logout:'🚪' };
+                  const labels: Record<string,string> = { page_view:'Page View', product_view:'Viewed Product', collection_view:'Browsed Collection', search:'Searched', cart_add:'Added to Cart', order_placed:'Placed Order', login:'Logged In', logout:'Logged Out' };
+                  const d = new Date(event.occurred_at);
+                  return (
+                    <div key={event.id} className="flex items-start gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors">
+                      <span className="text-base flex-shrink-0 mt-0.5">{icons[event.event_type] || '🌐'}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm text-gray-700">{labels[event.event_type] || event.event_type}</span>
+                          {event.product_title && <span className="text-sm text-brand-600 font-medium">{event.product_title}</span>}
+                          {event.search_query && <span className="text-sm text-purple-600 font-medium">"{event.search_query}"</span>}
+                          {event.page_title && !event.product_title && event.event_type === 'page_view' && <span className="text-sm text-gray-400">{event.page_title}</span>}
+                        </div>
+                        {event.page_url && <p className="text-xs text-gray-300 truncate mt-0.5">{event.page_url}</p>}
+                      </div>
+                      <span className="text-xs text-gray-400 flex-shrink-0 whitespace-nowrap">
+                        {d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} {d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 }
-
-              {tab === 'activity' && (
-                <div>
-                  {activityLoading ? (
-                    <div className="flex items-center justify-center py-12 text-gray-400">
-                      <svg className="w-5 h-5 animate-spin mr-2" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                      Loading activity...
-                    </div>
-                  ) : activityEvents.length === 0 ? (
-                    <div className="text-center py-12">
-                      <p className="text-gray-400">No website activity recorded for this customer yet.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      {activityEvents.map((event: any) => {
-                        const icons: Record<string,string> = { page_view:'👀', product_view:'🛍️', collection_view:'📂', search:'🔍', cart_add:'🛒', order_placed:'✅', login:'🔐', logout:'🚪' };
-                        const labels: Record<string,string> = { page_view:'Page View', product_view:'Viewed Product', collection_view:'Browsed Collection', search:'Searched', cart_add:'Added to Cart', order_placed:'Placed Order', login:'Logged In', logout:'Logged Out' };
-                        const d = new Date(event.occurred_at);
-                        return (
-                          <div key={event.id} className="flex items-start gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors">
-                            <span className="text-base flex-shrink-0 mt-0.5">{icons[event.event_type] || '🌐'}</span>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-sm text-gray-700">{labels[event.event_type] || event.event_type}</span>
-                                {event.product_title && <span className="text-sm text-brand-600 font-medium">{event.product_title}</span>}
-                                {event.search_query && <span className="text-sm text-purple-600 font-medium">"{event.search_query}"</span>}
-                                {event.page_title && !event.product_title && event.event_type === 'page_view' && <span className="text-sm text-gray-400">{event.page_title}</span>}
-                              </div>
-                              {event.page_url && <p className="text-xs text-gray-300 truncate mt-0.5">{event.page_url}</p>}
-                            </div>
-                            <span className="text-xs text-gray-400 flex-shrink-0 whitespace-nowrap">
-                              {d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} {d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
