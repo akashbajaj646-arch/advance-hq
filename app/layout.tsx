@@ -1,6 +1,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import TicketBadge from '@/components/TicketBadge';
 import Providers from '@/components/Providers';
 import UserMenu from '@/components/UserMenu';
 
@@ -77,6 +78,8 @@ export default function RootLayout({
                   </svg>
                   Invoices
                 </Link>
+
+                <TicketBadge />
 
                 <Link href="/payments" className="sidebar-link">
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

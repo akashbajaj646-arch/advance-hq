@@ -22,6 +22,7 @@ const ALLOWED_TABLES = new Set([
   'divisions', 'vendors', 'size_ranges',
   'portals', 'portal_items', 'portal_attachments',
   'change_requests', 'credit_memos', 'payments',
+  'support_tickets', 'ticket_items', 'ticket_photos', 'ticket_comments',
 ]);
 
 // Allowed RPC functions
