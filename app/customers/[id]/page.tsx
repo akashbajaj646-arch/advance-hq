@@ -16,11 +16,25 @@ export default function CustomerDetailPage() {
   const [shipments, setShipments] = useState<any[]>([]);
   const [pickTickets, setPickTickets] = useState<any[]>([]);
   const [activityEvents, setActivityEvents] = useState<any[]>([]);
+  const [customerPayments, setCustomerPayments] = useState<any[]>([]);
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [activityLoading, setActivityLoading] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'orders' | 'invoices' | 'shipments' | 'activity' | 'pick-tickets'>('orders');
+  const [tab, setTab] = useState<'orders' | 'invoices' | 'shipments' | 'activity' | 'pick-tickets' | 'payments'>('orders');
 
   useEffect(() => { loadCustomer(); }, [id]);
+
+  async function loadPayments(amCustomerId: string) {
+    if (!amCustomerId) return;
+    setPaymentsLoading(true);
+    const { data } = await db.from('payments')
+      .select('*')
+      .eq('am_customer_id', amCustomerId)
+      .order('payment_date', { ascending: false })
+      .limit(100);
+    setCustomerPayments(data || []);
+    setPaymentsLoading(false);
+  }
 
   async function loadActivity(email: string) {
     if (!email) return;
@@ -76,6 +90,7 @@ export default function CustomerDetailPage() {
     { key: 'shipments' as const, label: 'Shipments', count: shipments.length },
     { key: 'pick-tickets' as const, label: 'Pick Tickets', count: pickTickets.length },
     { key: 'activity' as const, label: 'Activity' },
+    { key: 'payments' as const, label: 'Payments', count: customerPayments.length },
   ];
 
   return (
@@ -138,7 +153,8 @@ export default function CustomerDetailPage() {
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-200 mb-6">
         {tabs.map(t => (
-          <button key={t.key} onClick={() => { setTab(t.key); if (t.key === 'activity' && customer?.email) loadActivity(customer.email); }} className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${tab === t.key ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+          <button key={t.key} onClick={() => { setTab(t.key); if (t.key === 'activity' && customer?.email) loadActivity(customer.email);
+              if (t.key === 'payments' && customer?.am_customer_id) loadPayments(customer.am_customer_id); }} className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${tab === t.key ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             {t.label}{t.count !== undefined && <span className="text-gray-300 ml-1">({t.count})</span>}
           </button>
         ))}
@@ -234,6 +250,52 @@ export default function CustomerDetailPage() {
               ))}
             </tbody>
           </table>
+        )}
+
+        {tab === 'payments' && (
+          <div>
+            {paymentsLoading ? (
+              <div className="flex items-center justify-center py-12 text-gray-400">
+                <svg className="w-5 h-5 animate-spin mr-2" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                Loading payments...
+              </div>
+            ) : customerPayments.length === 0 ? (
+              <div className="text-center py-12"><p className="text-gray-400">No payments found for this customer.</p></div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead><tr className="bg-gray-50 border-b border-gray-200">
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Payment #</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Type</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Reference</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-500">Received</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-500">Applied</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-500">Balance</th>
+                  <th className="px-4 py-3 text-center font-medium text-gray-500">Status</th>
+                </tr></thead>
+                <tbody>
+                  {customerPayments.map(p => (
+                    <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="px-4 py-3 font-medium text-brand-600">#{p.am_payment_id}</td>
+                      <td className="px-4 py-3 text-gray-600">{p.payment_type || '-'}</td>
+                      <td className="px-4 py-3 text-gray-600">{p.reference || '-'}</td>
+                      <td className="px-4 py-3 text-gray-600">{p.payment_date ? new Date(p.payment_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}</td>
+                      <td className="px-4 py-3 text-right font-medium">${parseFloat(p.amount_received || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-3 text-right text-gray-600">${parseFloat(p.amount_applied || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-3 text-right">
+                        <span className={parseFloat(p.balance) > 0 ? 'text-yellow-600 font-medium' : 'text-gray-600'}>
+                          ${parseFloat(p.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {p.void ? <span className="px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">Void</span> : <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Active</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         )}
 
         {tab === 'activity' && (
