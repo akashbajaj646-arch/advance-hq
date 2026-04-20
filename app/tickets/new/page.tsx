@@ -27,6 +27,7 @@ export default function NewTicketPage() {
   const [invoiceError, setInvoiceError] = useState('');
   const [lineIssues, setLineIssues] = useState<Record<string, { qty: number; issue_type: string; notes: string }>>({});
   const [files, setFiles] = useState<File[]>([]);
+  const [notesModal, setNotesModal] = useState<{ itemId: string; value: string } | null>(null);
 
   function toggleIssue(key: string) {
     setForm(f => ({
@@ -43,6 +44,8 @@ export default function NewTicketPage() {
     setInvoiceError('');
     setInvoiceItems([]);
     setLineIssues({});
+
+    // Fetch invoice items
     const res = await fetch(`/api/tickets/invoice-items?invoice_number=${form.invoice_number.trim()}`);
     const { data, error } = await res.json();
     if (error || !data?.length) {
@@ -50,6 +53,43 @@ export default function NewTicketPage() {
     } else {
       setInvoiceItems(data);
     }
+
+    // Auto-populate customer info from invoice
+    try {
+      const invRes = await fetch(`/api/data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'select', table: 'invoices',
+          filters: [{ op: 'eq', col: 'invoice_number', val: form.invoice_number.trim() }],
+          limit: 1,
+        }),
+      });
+      const invData = await invRes.json();
+      const invoice = invData.data?.[0];
+      if (invoice) {
+        // Look up customer email
+        const custRes = await fetch(`/api/data`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'select', table: 'customers',
+            filters: [{ op: 'eq', col: 'am_customer_id', val: invoice.apparel_magic_customer_id }],
+            limit: 1,
+          }),
+        });
+        const custData = await custRes.json();
+        const customer = custData.data?.[0];
+        if (customer) {
+          setForm(f => ({
+            ...f,
+            customer_name: f.customer_name || customer.customer_name || '',
+            customer_email: f.customer_email || customer.email || '',
+          }));
+        }
+      }
+    } catch {}
+
     setInvoiceLoading(false);
   }
 
@@ -154,7 +194,38 @@ export default function NewTicketPage() {
         <div className="card">
           <h2 className="text-base font-semibold text-gray-900 mb-1">Invoice Lookup</h2>
           <p className="text-xs text-gray-400 mb-4">Enter an invoice number to load all line items — then mark which ones have issues.</p>
-          <div className="flex gap-3">
+          {/* Notes Modal */}
+        {notesModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+              <h3 className="text-base font-semibold text-gray-900 mb-3">Add Note</h3>
+              <textarea
+                autoFocus
+                value={notesModal.value}
+                onChange={e => setNotesModal(n => n ? { ...n, value: e.target.value } : n)}
+                rows={5}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
+                placeholder="Describe the issue with this item in detail..."
+              />
+              <div className="flex gap-3 mt-4">
+                <button
+                  onClick={() => {
+                    updateLineIssue(notesModal.itemId, 'notes', notesModal.value);
+                    setNotesModal(null);
+                  }}
+                  className="flex-1 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700">
+                  Save Note
+                </button>
+                <button onClick={() => setNotesModal(null)}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-3">
             <div className="flex-1">
               <input value={form.invoice_number}
                 onChange={e => setForm(f => ({ ...f, invoice_number: e.target.value }))}
@@ -218,12 +289,11 @@ export default function NewTicketPage() {
                             </select>
                           </td>
                           <td className="px-3 py-2">
-                            <input
-                              value={lineIssues[item.id]?.notes || ''}
-                              onChange={e => updateLineIssue(item.id, 'notes', e.target.value)}
-                              placeholder="Optional notes..."
-                              className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            />
+                            <button
+                              onClick={() => setNotesModal({ itemId: item.id, value: lineIssues[item.id]?.notes || '' })}
+                              className={`w-full px-2 py-1 border rounded text-xs text-left truncate max-w-[120px] ${lineIssues[item.id]?.notes ? 'border-brand-300 text-gray-700 bg-brand-50' : 'border-gray-300 text-gray-400 hover:bg-gray-50'}`}>
+                              {lineIssues[item.id]?.notes || 'Add note...'}
+                            </button>
                           </td>
                         </tr>
                       );
@@ -305,6 +375,37 @@ export default function NewTicketPage() {
           <input value={form.submitted_by} onChange={e => setForm(f => ({ ...f, submitted_by: e.target.value }))}
             className="input max-w-xs" placeholder="Your name" />
         </div>
+
+        {/* Notes Modal */}
+        {notesModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+              <h3 className="text-base font-semibold text-gray-900 mb-3">Add Note</h3>
+              <textarea
+                autoFocus
+                value={notesModal.value}
+                onChange={e => setNotesModal(n => n ? { ...n, value: e.target.value } : n)}
+                rows={5}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
+                placeholder="Describe the issue with this item in detail..."
+              />
+              <div className="flex gap-3 mt-4">
+                <button
+                  onClick={() => {
+                    updateLineIssue(notesModal.itemId, 'notes', notesModal.value);
+                    setNotesModal(null);
+                  }}
+                  className="flex-1 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700">
+                  Save Note
+                </button>
+                <button onClick={() => setNotesModal(null)}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="flex gap-3">
           <button onClick={handleSubmit} disabled={saving}
