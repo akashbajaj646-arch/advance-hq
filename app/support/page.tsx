@@ -53,7 +53,7 @@ export default function SupportPage() {
   function updateLineIssue(itemId: string, field: string, value: any) {
     setLineIssues(prev => ({
       ...prev,
-      [itemId]: { qty: 0, issue_type: '', notes: '', ...prev[itemId], [field]: value }
+      [itemId]: { ...(prev[itemId] || { qty: 0, issue_type: "", notes: "" }), [field]: value }
     }));
   }
 
