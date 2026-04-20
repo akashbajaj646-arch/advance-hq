@@ -21,7 +21,10 @@ export default function SupportPage() {
     customer_name: '', customer_email: '', invoice_number: '',
     order_number: '', description: '', issue_types: [] as string[],
   });
-  const [items, setItems] = useState<any[]>([]);
+  const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
+  const [invoiceLoading, setInvoiceLoading] = useState(false);
+  const [invoiceError, setInvoiceError] = useState('');
+  const [lineIssues, setLineIssues] = useState<Record<string, { qty: number; issue_type: string; notes: string }>>({});
   const [files, setFiles] = useState<File[]>([]);
 
   function toggleIssue(key: string) {
@@ -31,17 +34,57 @@ export default function SupportPage() {
     }));
   }
 
-  function addItem() {
-    setItems(prev => [...prev, { style_number: '', color: '', size: '', quantity: 1, issue_type: '', notes: '' }]);
+  async function lookupInvoice() {
+    if (!form.invoice_number.trim()) return;
+    setInvoiceLoading(true);
+    setInvoiceError('');
+    setInvoiceItems([]);
+    setLineIssues({});
+    const res = await fetch(`/api/tickets/invoice-items?invoice_number=${form.invoice_number.trim()}`);
+    const { data, error } = await res.json();
+    if (error || !data?.length) {
+      setInvoiceError('No items found for this invoice number. You can still submit without invoice items.');
+    } else {
+      setInvoiceItems(data);
+    }
+    setInvoiceLoading(false);
   }
 
-  function updateItem(idx: number, field: string, value: any) {
-    setItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: value } : item));
+  function updateLineIssue(itemId: string, field: string, value: any) {
+    setLineIssues(prev => ({
+      ...prev,
+      [itemId]: { qty: 0, issue_type: '', notes: '', ...prev[itemId], [field]: value }
+    }));
+  }
+
+  function buildAffectedItems() {
+    return invoiceItems
+      .filter(item => lineIssues[item.id]?.issue_type)
+      .map(item => ({
+        style_number: item.style_number,
+        description: item.description,
+        color: item.attr_2,
+        size: item.size,
+        quantity: lineIssues[item.id]?.qty || 1,
+        issue_type: lineIssues[item.id]?.issue_type,
+        notes: lineIssues[item.id]?.notes || '',
+      }));
+  }
+
+  function getIssueTypesFromLines() {
+    const types = new Set(Object.values(lineIssues).map(l => l.issue_type).filter(Boolean));
+    return Array.from(types);
   }
 
   async function handleSubmit() {
-    if (!form.customer_name || !form.customer_email || form.issue_types.length === 0) {
-      alert('Please fill in your name, email, and at least one issue type.');
+    if (!form.customer_name || !form.customer_email) {
+      alert('Please fill in your name and email.');
+      return;
+    }
+    const affectedItems = buildAffectedItems();
+    const issueTypes = form.issue_types.length > 0 ? form.issue_types : getIssueTypesFromLines();
+    if (issueTypes.length === 0) {
+      alert('Please select at least one issue type or mark an issue on an invoice line item.');
       return;
     }
     setSubmitting(true);
@@ -50,8 +93,8 @@ export default function SupportPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ticket: { ...form, is_customer_submitted: true, submitted_by: form.customer_name },
-          items,
+          ticket: { ...form, issue_types: issueTypes, is_customer_submitted: true, submitted_by: form.customer_name },
+          items: affectedItems,
         }),
       });
       const { data, error } = await res.json();
@@ -84,7 +127,7 @@ export default function SupportPage() {
           <p className="text-gray-500 mb-4">Your support ticket has been received. Our team will be in touch soon.</p>
           <div className="bg-gray-50 rounded-lg p-4 mb-6">
             <p className="text-xs text-gray-400 mb-1">Your ticket number</p>
-            <p className="text-2xl font-bold text-brand-600">{ticketNumber}</p>
+            <p className="text-2xl font-bold text-blue-600">{ticketNumber}</p>
           </div>
           <p className="text-sm text-gray-400">Please save your ticket number for reference. You can reach us at support@advanceapparels.com with any questions.</p>
         </div>
@@ -94,55 +137,108 @@ export default function SupportPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4">
-      <div className="max-w-2xl mx-auto">
+      <div className="max-w-3xl mx-auto">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Submit a Support Ticket</h1>
           <p className="text-gray-500 mt-2">Having an issue with your order? Let us know and we'll make it right.</p>
         </div>
 
         <div className="space-y-6">
-          {/* Contact Info */}
+          {/* Contact */}
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <h2 className="text-base font-semibold text-gray-900 mb-4">Your Information</h2>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Full Name *</label>
                 <input value={form.customer_name} onChange={e => setForm(f => ({ ...f, customer_name: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Your name" />
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Your name" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Email Address *</label>
                 <input value={form.customer_email} onChange={e => setForm(f => ({ ...f, customer_email: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="your@email.com" type="email" />
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="your@email.com" type="email" />
               </div>
             </div>
           </div>
 
-          {/* Order Reference */}
+          {/* Invoice Lookup */}
           <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 className="text-base font-semibold text-gray-900 mb-1">Order Reference</h2>
-            <p className="text-xs text-gray-400 mb-4">Enter your invoice number if you have it — this helps us find your order fastest.</p>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Invoice Number <span className="text-blue-600">(preferred)</span></label>
-                <input value={form.invoice_number} onChange={e => setForm(f => ({ ...f, invoice_number: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="e.g. 12345" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Order Number</label>
-                <input value={form.order_number} onChange={e => setForm(f => ({ ...f, order_number: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Optional" />
-              </div>
+            <h2 className="text-base font-semibold text-gray-900 mb-1">Invoice Number</h2>
+            <p className="text-xs text-gray-400 mb-4">Enter your invoice number and we'll load your order items so you can select exactly which ones have issues.</p>
+            <div className="flex gap-3 mb-4">
+              <input value={form.invoice_number}
+                onChange={e => setForm(f => ({ ...f, invoice_number: e.target.value }))}
+                onKeyDown={e => e.key === 'Enter' && lookupInvoice()}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="e.g. 12345" />
+              <button onClick={lookupInvoice} disabled={invoiceLoading || !form.invoice_number.trim()}
+                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 flex items-center gap-2">
+                {invoiceLoading && <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}
+                {invoiceLoading ? 'Loading...' : 'Load Items'}
+              </button>
             </div>
+            {invoiceError && <p className="text-sm text-red-500 mb-3">{invoiceError}</p>}
+
+            {invoiceItems.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-2">{invoiceItems.length} items found — select issue type for affected items only</p>
+                <div className="border border-gray-200 rounded-lg overflow-hidden overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200">
+                        <th className="px-3 py-2 text-left font-medium text-gray-500">Style</th>
+                        <th className="px-3 py-2 text-left font-medium text-gray-500">Description</th>
+                        <th className="px-3 py-2 text-left font-medium text-gray-500">Color</th>
+                        <th className="px-3 py-2 text-left font-medium text-gray-500">Size</th>
+                        <th className="px-3 py-2 text-right font-medium text-gray-500">Qty</th>
+                        <th className="px-3 py-2 text-center font-medium text-gray-500">Affected Qty</th>
+                        <th className="px-3 py-2 text-left font-medium text-gray-500">Issue</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {invoiceItems.map(item => {
+                        const hasIssue = !!lineIssues[item.id]?.issue_type;
+                        return (
+                          <tr key={item.id} className={`border-b border-gray-100 ${hasIssue ? 'bg-red-50' : ''}`}>
+                            <td className="px-3 py-2 font-medium">{item.style_number || '-'}</td>
+                            <td className="px-3 py-2 text-gray-600 text-xs max-w-[120px] truncate">{item.description || '-'}</td>
+                            <td className="px-3 py-2 text-gray-600">{item.attr_2 || '-'}</td>
+                            <td className="px-3 py-2 text-gray-600">{item.size || '-'}</td>
+                            <td className="px-3 py-2 text-right text-gray-600">{item.qty}</td>
+                            <td className="px-3 py-2 text-center">
+                              <input type="number" min={0} max={item.qty}
+                                value={lineIssues[item.id]?.qty || ''}
+                                onChange={e => updateLineIssue(item.id, 'qty', parseInt(e.target.value) || 0)}
+                                placeholder="0"
+                                className="w-14 px-2 py-1 border border-gray-300 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            </td>
+                            <td className="px-3 py-2">
+                              <select value={lineIssues[item.id]?.issue_type || ''}
+                                onChange={e => updateLineIssue(item.id, 'issue_type', e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                <option value="">No issue</option>
+                                {ISSUE_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+                              </select>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {Object.values(lineIssues).filter(l => l.issue_type).length > 0 && (
+                  <p className="text-xs text-blue-600 mt-2 font-medium">
+                    ✓ {Object.values(lineIssues).filter(l => l.issue_type).length} item(s) marked with issues
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Issue Types */}
+          {/* Order-level issues */}
           <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 className="text-base font-semibold text-gray-900 mb-4">What's the issue? *</h2>
+            <h2 className="text-base font-semibold text-gray-900 mb-1">Order-Level Issues</h2>
+            <p className="text-xs text-gray-400 mb-4">Select if your issue applies to the whole order (e.g. late delivery, wrong address).</p>
             <div className="grid grid-cols-2 gap-2">
               {ISSUE_TYPES.map(issue => (
                 <button key={issue.key} onClick={() => toggleIssue(issue.key)}
@@ -155,53 +251,16 @@ export default function SupportPage() {
 
           {/* Description */}
           <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 className="text-base font-semibold text-gray-900 mb-4">Describe the Issue</h2>
+            <h2 className="text-base font-semibold text-gray-900 mb-4">Additional Details</h2>
             <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
               rows={4} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              placeholder="Please describe the issue in as much detail as possible..." />
-          </div>
-
-          {/* Affected Items */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-base font-semibold text-gray-900">Affected Items</h2>
-                <p className="text-xs text-gray-400 mt-0.5">List each affected piece separately</p>
-              </div>
-              <button onClick={addItem} className="text-sm text-blue-600 hover:text-blue-700 font-medium">+ Add Item</button>
-            </div>
-            {items.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-4">Click "Add Item" to list specific affected pieces</p>
-            ) : (
-              <div className="space-y-3">
-                {items.map((item, idx) => (
-                  <div key={idx} className="border border-gray-200 rounded-lg p-3">
-                    <div className="grid grid-cols-4 gap-2 mb-2">
-                      <input value={item.style_number} onChange={e => updateItem(idx, 'style_number', e.target.value)}
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs" placeholder="Style #" />
-                      <input value={item.color} onChange={e => updateItem(idx, 'color', e.target.value)}
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs" placeholder="Color" />
-                      <input value={item.size} onChange={e => updateItem(idx, 'size', e.target.value)}
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs" placeholder="Size" />
-                      <input value={item.quantity} type="number" min={1} onChange={e => updateItem(idx, 'quantity', parseInt(e.target.value))}
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs" placeholder="Qty" />
-                    </div>
-                    <div className="flex gap-2">
-                      <input value={item.notes} onChange={e => updateItem(idx, 'notes', e.target.value)}
-                        className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-xs" placeholder="Additional notes..." />
-                      <button onClick={() => setItems(prev => prev.filter((_, i) => i !== idx))}
-                        className="text-red-400 hover:text-red-600 text-xs px-2">Remove</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+              placeholder="Any additional details about the issue..." />
           </div>
 
           {/* Photos */}
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <h2 className="text-base font-semibold text-gray-900 mb-1">Photos</h2>
-            <p className="text-xs text-gray-400 mb-4">For damaged items, please upload one photo per affected piece</p>
+            <p className="text-xs text-gray-400 mb-4">For damaged items, please upload one photo per affected piece.</p>
             <div className="border-2 border-dashed border-gray-200 rounded-lg p-6 text-center">
               <input type="file" multiple accept="image/*" id="photo-upload" className="hidden"
                 onChange={e => setFiles(prev => [...prev, ...Array.from(e.target.files || [])])} />

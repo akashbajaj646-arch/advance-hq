@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 // Routes that don't require auth
-const PUBLIC_PATHS = ['/api/track/', '/api/tickets/', '/support',"/api/admin/", '/login', '/signup', '/api/auth/login', '/api/auth/signup', '/api/auth/bootstrap', '/api/auth/me'];
+const PUBLIC_PATHS = ['/api/track/', '/api/tickets/', '/support', '/api/tickets/invoice-items',"/api/admin/", '/login', '/signup', '/api/auth/login', '/api/auth/signup', '/api/auth/bootstrap', '/api/auth/me'];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
