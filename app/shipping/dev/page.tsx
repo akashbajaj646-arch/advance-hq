@@ -1,17 +1,12 @@
 'use client';
 
 /**
- * /shipping/dev — internal smoke-test page (Week 2 expansion).
+ * /shipping/dev — internal smoke-test page.
  *
- * Three panels now:
- *   1. Health check (Week 1)
- *   2. Address validation (Week 1)
- *   3. Rate + Label + Void (Week 2) — new
- *
- * The Week 2 panel walks through a full shipping flow: pick a warehouse,
- * fill in ship-to + box dims/weight, click Get Rate, then Create Label,
- * preview the ZPL via Labelary's free PNG-render API, and void with one
- * click if needed.
+ * Three panels:
+ *   1. Health check
+ *   2. Address validation (UPS or USPS via EasyPost)
+ *   3. Rate + Create label + Void (UPS Ground/Air or USPS Priority/Ground Advantage/etc)
  */
 
 import { useEffect, useState } from 'react';
@@ -60,20 +55,28 @@ interface Quote {
 
 interface CreateLabelResponse {
   shipment_id?: string;
+  carrier?: string;
   service_code?: string;
   service_name?: string;
   total_cost_usd?: number;
   ups_shipment_digest?: string;
-  boxes?: { tracking_number: string; cost_usd?: number; zpl?: string }[];
+  easypost_shipment_id?: string;
+  boxes?: { tracking_number: string; cost_usd?: number; zpl?: string; pdf_url?: string }[];
   error?: string;
 }
 
 const SHIP_VIA_OPTIONS = [
+  // UPS
   'UPS Ground',
   'UPS 2nd Day Air',
   'UPS Next Day Air',
   'UPS Next Day Air Saver',
   'UPS 3 Day Select',
+  // USPS via EasyPost
+  'USPS Priority Mail',
+  'USPS Ground Advantage',
+  'USPS Priority Mail Express',
+  'USPS First Class',
 ];
 
 export default function ShippingDevPage() {
@@ -132,11 +135,10 @@ export default function ShippingDevPage() {
     }
   }
 
-  // ── Label creation panel (Week 2) ─────────────────────────────────
+  // ── Label creation panel ──────────────────────────────────────────
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [warehouseId, setWarehouseId] = useState('leuning');
   const [shipVia, setShipVia] = useState('UPS Ground');
-  // Default ship-to is a CA address since CIE only validates NY/CA.
   const [name, setName] = useState('Test Recipient');
   const [phone, setPhone] = useState('5551234567');
   const [street1, setStreet1] = useState('350 5th Ave');
@@ -165,6 +167,21 @@ export default function ShippingDevPage() {
       .then((d) => setWarehouses(d?.warehouses ?? []))
       .catch(() => {});
   }, []);
+
+  // When user switches between UPS and USPS ship_via, swap defaults so they
+  // don't have to fight CIE state restrictions for UPS testing.
+  useEffect(() => {
+    const isUsps = shipVia.startsWith('USPS');
+    if (isUsps) {
+      // USPS: use the user's real NJ warehouse address as a realistic ship-to
+      // (EasyPost validates real addresses including NJ).
+      setStreet1('388 Townsend St');
+      setCity('San Francisco');
+      setState('CA');
+      setZip('94107');
+    }
+    // (UPS defaults already set in initial state — leave them.)
+  }, [shipVia]);
 
   function buildShipTo() {
     return {
@@ -429,7 +446,16 @@ export default function ShippingDevPage() {
           <div>
             <label className="text-xs text-gray-600 block mb-1">Ship via</label>
             <select value={shipVia} onChange={(e) => setShipVia(e.target.value)} className="w-full border rounded px-2 py-1.5">
-              {SHIP_VIA_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+              <optgroup label="UPS">
+                {SHIP_VIA_OPTIONS.filter((s) => s.startsWith('UPS')).map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </optgroup>
+              <optgroup label="USPS (via EasyPost)">
+                {SHIP_VIA_OPTIONS.filter((s) => s.startsWith('USPS')).map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </optgroup>
             </select>
           </div>
         </div>
@@ -559,14 +585,24 @@ export default function ShippingDevPage() {
                 <div className="p-3 bg-green-50 border border-green-200 rounded text-sm">
                   <div className="font-semibold text-green-900">Label created</div>
                   <div className="text-green-800 mt-1">
-                    Service: {label.service_name} ({label.service_code}) · Total: ${label.total_cost_usd?.toFixed(2)}
+                    {label.carrier} · {label.service_name} ({label.service_code}) · Total: ${label.total_cost_usd?.toFixed(2)}
                   </div>
                   <div className="text-xs text-green-700 mt-1 font-mono break-all">
-                    Shipment: {label.shipment_id} · UPS digest: {label.ups_shipment_digest}
+                    Shipment: {label.shipment_id}
+                    {label.ups_shipment_digest && <> · UPS digest: {label.ups_shipment_digest}</>}
+                    {label.easypost_shipment_id && <> · EasyPost id: {label.easypost_shipment_id}</>}
                   </div>
                 </div>
                 {label.boxes?.map((b, i) => (
-                  <BoxLabelView key={i} idx={i + 1} tracking={b.tracking_number} cost={b.cost_usd} zpl={b.zpl} onDownload={downloadZpl} />
+                  <BoxLabelView
+                    key={i}
+                    idx={i + 1}
+                    tracking={b.tracking_number}
+                    cost={b.cost_usd}
+                    zpl={b.zpl}
+                    pdfUrl={b.pdf_url}
+                    onDownload={downloadZpl}
+                  />
                 ))}
                 <div className="flex gap-2 items-center pt-2">
                   <button
@@ -578,7 +614,9 @@ export default function ShippingDevPage() {
                   </button>
                   {voidResult && (
                     <span className={`text-sm ${voidResult.success ? 'text-green-700' : 'text-red-700'}`}>
-                      {voidResult.success ? '✓ Voided' : `✗ ${voidResult.error || voidResult.message}`}
+                      {voidResult.success
+                        ? `✓ ${voidResult.message || 'Voided'}`
+                        : `✗ ${voidResult.error || voidResult.message}`}
                     </span>
                   )}
                 </div>
@@ -617,16 +655,16 @@ function BoxLabelView({
   tracking,
   cost,
   zpl,
+  pdfUrl,
   onDownload,
 }: {
   idx: number;
   tracking: string;
   cost?: number;
   zpl?: string;
+  pdfUrl?: string;
   onDownload: (zpl: string, filename: string) => void;
 }) {
-  // Labelary free API renders ZPL → PNG (4x6 at 8 dpmm = 203 dpi).
-  // POST the raw ZPL as the body; receive a PNG.
   const [pngUrl, setPngUrl] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
@@ -640,9 +678,7 @@ function BoxLabelView({
       signal: ctrl.signal,
     })
       .then(async (r) => {
-        if (!r.ok) {
-          throw new Error(`Labelary HTTP ${r.status}`);
-        }
+        if (!r.ok) throw new Error(`Labelary HTTP ${r.status}`);
         const blob = await r.blob();
         setPngUrl(URL.createObjectURL(blob));
       })
@@ -660,14 +696,26 @@ function BoxLabelView({
           <div className="text-xs font-mono text-gray-700">{tracking}</div>
           {cost != null && <div className="text-xs text-gray-600">${cost.toFixed(2)}</div>}
         </div>
-        {zpl && (
-          <button
-            onClick={() => onDownload(zpl, `${tracking}.zpl`)}
-            className="text-xs text-blue-600 hover:underline"
-          >
-            Download .zpl
-          </button>
-        )}
+        <div className="flex gap-3">
+          {zpl && (
+            <button
+              onClick={() => onDownload(zpl, `${tracking}.zpl`)}
+              className="text-xs text-blue-600 hover:underline"
+            >
+              Download .zpl
+            </button>
+          )}
+          {pdfUrl && (
+            <a
+              href={pdfUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-blue-600 hover:underline"
+            >
+              Open PDF
+            </a>
+          )}
+        </div>
       </div>
       {pngUrl ? (
         <img src={pngUrl} alt={`Label ${idx}`} className="border bg-white" style={{ width: 240 }} />
@@ -675,8 +723,10 @@ function BoxLabelView({
         <div className="text-xs text-amber-700">Preview unavailable: {previewError}</div>
       ) : zpl ? (
         <div className="text-xs text-gray-500">Rendering preview…</div>
+      ) : pdfUrl ? (
+        <div className="text-xs text-gray-500">No ZPL — use the PDF link above</div>
       ) : (
-        <div className="text-xs text-gray-500">No ZPL returned</div>
+        <div className="text-xs text-gray-500">No label data returned</div>
       )}
     </div>
   );

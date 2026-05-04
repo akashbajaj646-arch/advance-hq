@@ -5,14 +5,14 @@
  *   warehouse_id: string,
  *   ship_to: Address,
  *   boxes: Box[],
- *   ship_via?: string,        // if set, returns just that service quote
+ *   ship_via?: string,
  * }
  *
- * Returns RateQuote[]. UPS only for now (USPS rating is Week 3).
+ * Returns RateQuote[]. Routes to UPS or EasyPost based on ship_via.
  */
 
 import { NextResponse } from 'next/server';
-import { resolveShipVia, upsClient } from '@/lib/carriers';
+import { carrierFor, resolveShipVia } from '@/lib/carriers';
 import { getShipFromAddress } from '@/lib/carriers/warehouses';
 import { Box, Address, RateRequest } from '@/lib/carriers/types';
 
@@ -45,36 +45,24 @@ export async function POST(req: Request) {
   if (!warehouseId) return NextResponse.json({ error: 'warehouse_id is required' }, { status: 400 });
   if (!shipTo?.street1 || !shipTo?.city || !shipTo?.state || !shipTo?.zip)
     return NextResponse.json({ error: 'ship_to address is incomplete' }, { status: 400 });
+  if (!shipVia) return NextResponse.json({ error: 'ship_via is required' }, { status: 400 });
 
   const boxes = validateBoxes(body?.boxes);
   if (typeof boxes === 'string') return NextResponse.json({ error: boxes }, { status: 400 });
 
-  // Determine carrier + service
-  let serviceCode: string | undefined;
-  let carrierKey = 'ups';
-  if (shipVia) {
-    try {
-      const r = await resolveShipVia(shipVia);
-      serviceCode = r.serviceCode;
-      carrierKey = r.carrier;
-    } catch (e) {
-      return NextResponse.json(
-        { error: e instanceof Error ? e.message : 'unknown ship_via' },
-        { status: 400 }
-      );
-    }
-  }
-
-  if (carrierKey !== 'ups') {
+  let resolved;
+  try {
+    resolved = await resolveShipVia(shipVia);
+  } catch (e) {
     return NextResponse.json(
-      { error: 'USPS rating is implemented in Week 3' },
-      { status: 501 }
+      { error: e instanceof Error ? e.message : 'unknown ship_via' },
+      { status: 400 }
     );
   }
 
   let shipFrom: Address;
   try {
-    shipFrom = await getShipFromAddress(warehouseId);
+    shipFrom = await getShipFromAddress(warehouseId, resolved.carrier);
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : 'warehouse lookup failed' },
@@ -82,10 +70,16 @@ export async function POST(req: Request) {
     );
   }
 
-  const rateReq: RateRequest = { shipFrom, shipTo, boxes, serviceCode };
+  const rateReq: RateRequest = {
+    shipFrom,
+    shipTo,
+    boxes,
+    serviceCode: resolved.serviceCode,
+  };
 
   try {
-    const quotes = await upsClient.getRates(rateReq);
+    const client = carrierFor(resolved.carrier);
+    const quotes = await client.getRates(rateReq);
     return NextResponse.json({ quotes });
   } catch (e) {
     return NextResponse.json(

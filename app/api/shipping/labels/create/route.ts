@@ -1,29 +1,13 @@
 /**
  * POST /api/shipping/labels/create
  *
- * Body: {
- *   warehouse_id: string,
- *   ship_via: string,                    // e.g. "UPS Ground"
- *   ship_to: Address,
- *   boxes: Box[],                        // each with weight + dims
- *   pick_ticket_ids?: string[],          // optional, for consolidation
- *   reference?: string,                  // shows on label
- *   packing_station_id?: string,
- *   created_by_user_id?: string,
- * }
- *
- * Creates a shipment + N shipment_boxes rows. Returns the saved shipment
- * with tracking numbers and ZPL strings (one per box).
- *
- * Note on UPS digest: For single-package shipments, the ShipmentIdentificationNumber
- * IS the tracking number of the first package. UPS doesn't always return a
- * separate digest in CIE, so we fall back to the first tracking number for
- * void operations.
+ * Creates labels via the resolved carrier (UPS or EasyPost USPS) and persists
+ * the shipment + boxes to Supabase.
  */
 
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
-import { resolveShipVia, upsClient } from '@/lib/carriers';
+import { carrierFor, resolveShipVia } from '@/lib/carriers';
 import { getShipFromAddress } from '@/lib/carriers/warehouses';
 import { Address, Box, LabelRequest } from '@/lib/carriers/types';
 
@@ -75,16 +59,9 @@ export async function POST(req: Request) {
     );
   }
 
-  if (resolved.carrier !== 'ups') {
-    return NextResponse.json(
-      { error: 'USPS label creation lands in Week 3' },
-      { status: 501 }
-    );
-  }
-
   let shipFrom: Address;
   try {
-    shipFrom = await getShipFromAddress(warehouseId);
+    shipFrom = await getShipFromAddress(warehouseId, resolved.carrier);
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : 'warehouse lookup failed' },
@@ -102,7 +79,8 @@ export async function POST(req: Request) {
 
   let result;
   try {
-    result = await upsClient.createLabel(labelReq);
+    const client = carrierFor(resolved.carrier);
+    result = await client.createLabel(labelReq);
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : 'label creation failed' },
@@ -112,10 +90,14 @@ export async function POST(req: Request) {
 
   const firstTracking = result.boxes[0]?.trackingNumber || null;
 
-  // For UPS, the ShipmentIdentificationNumber and the first package's tracking
-  // number are the same value. UPS sometimes returns digest separately and
-  // sometimes doesn't (especially in CIE). Fall back to the first tracking.
-  const voidKey = result.upsShipmentDigest || firstTracking;
+  const upsVoidKey =
+    resolved.carrier === 'ups'
+      ? result.upsShipmentDigest || firstTracking
+      : null;
+  const easypostId =
+    resolved.carrier === 'easypost_usps'
+      ? result.carrierShipmentId || null
+      : null;
 
   const { data: shipmentRow, error: insertErr } = await supabaseAdmin
     .from('shipments')
@@ -126,7 +108,8 @@ export async function POST(req: Request) {
       tracking_number: firstTracking,
       packing_station_id: packingStationId || null,
       created_by_user_id: createdByUserId || null,
-      ups_shipment_digest: voidKey,
+      ups_shipment_digest: upsVoidKey,
+      easypost_shipment_id: easypostId,
       total_cost: result.totalCostUsd,
       rate_quote: {
         ship_via: shipVia,
@@ -149,8 +132,8 @@ export async function POST(req: Request) {
   if (insertErr || !shipmentRow) {
     return NextResponse.json(
       {
-        error: `label created at UPS but DB insert failed: ${insertErr?.message ?? 'unknown'}. ` +
-          `UPS shipment digest: ${voidKey}. Track: ${firstTracking}.`,
+        error: `label created at carrier but DB insert failed: ${insertErr?.message ?? 'unknown'}. ` +
+          `Carrier: ${resolved.carrier}. UPS digest: ${upsVoidKey}. EasyPost id: ${easypostId}. Track: ${firstTracking}.`,
       },
       { status: 500 }
     );
@@ -165,6 +148,7 @@ export async function POST(req: Request) {
     dim_width: boxes[i].width,
     dim_height: boxes[i].height,
     label_zpl: b.zpl || null,
+    label_pdf_url: b.pdfUrl || null,
     cost: b.costUsd ?? null,
   }));
   const { error: boxErr } = await supabaseAdmin.from('shipment_boxes').insert(boxRows);
@@ -178,11 +162,13 @@ export async function POST(req: Request) {
     service_code: result.serviceCode,
     service_name: result.serviceName,
     total_cost_usd: result.totalCostUsd,
-    ups_shipment_digest: voidKey,
+    ups_shipment_digest: upsVoidKey,
+    easypost_shipment_id: easypostId,
     boxes: result.boxes.map((b) => ({
       tracking_number: b.trackingNumber,
       cost_usd: b.costUsd,
       zpl: b.zpl,
+      pdf_url: b.pdfUrl,
     })),
   });
 }
