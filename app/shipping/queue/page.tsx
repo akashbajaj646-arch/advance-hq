@@ -2,9 +2,15 @@
 
 /**
  * /shipping/queue — Production PT queue.
+ *
+ * Auto-polls /api/admin/sync-pick-tickets-recent every 5 minutes while the
+ * page is open and visible. Plus a manual "Sync Now" button for the rare
+ * case where you need immediate freshness.
+ *
+ * Polling pauses when the tab is hidden so we don't waste API calls.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -36,7 +42,18 @@ interface Warehouse {
   display_name: string;
 }
 
+interface SyncStats {
+  scanned: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+  duration_seconds: number;
+  stopped_early: boolean;
+}
+
 const PAGE_SIZE = 50;
+const AUTO_POLL_MS = 5 * 60 * 1000; // 5 minutes
 
 export default function ShippingQueuePage() {
   const router = useRouter();
@@ -46,6 +63,14 @@ export default function ShippingQueuePage() {
   const [search, setSearch] = useState('');
   const [warehouseFilter, setWarehouseFilter] = useState('');
   const [page, setPage] = useState(0);
+
+  // Sync state
+  const [syncing, setSyncing] = useState(false);
+  const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
+  const [lastSyncStats, setLastSyncStats] = useState<SyncStats | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     fetch('/api/shipping/warehouses')
@@ -61,6 +86,42 @@ export default function ShippingQueuePage() {
   useEffect(() => {
     loadPTs();
   }, [search, warehouseFilter, page]);
+
+  // Auto-poll: fire a sync on mount, then every 5 min while tab is visible.
+  useEffect(() => {
+    // Initial sync on mount (don't block the UI on it)
+    void runSync({ silent: true });
+
+    function startInterval() {
+      stopInterval();
+      pollIntervalRef.current = setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          void runSync({ silent: true });
+        }
+      }, AUTO_POLL_MS);
+    }
+    function stopInterval() {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    }
+    function onVisibility() {
+      if (document.visibilityState === 'visible') {
+        startInterval();
+      } else {
+        stopInterval();
+      }
+    }
+
+    startInterval();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      stopInterval();
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function loadPTs() {
     setLoading(true);
@@ -83,10 +144,43 @@ export default function ShippingQueuePage() {
     }
   }
 
+  /**
+   * Fire the recent-PT sync and refresh the table afterward.
+   * silent: don't show "Syncing…" UI; used for the background poll.
+   */
+  async function runSync({ silent = false }: { silent?: boolean } = {}) {
+    if (syncing) return;
+    if (!silent) setSyncing(true);
+    setSyncError(null);
+    try {
+      const res = await fetch('/api/admin/sync-pick-tickets-recent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (!res.ok || data?.success === false) {
+        setSyncError(data?.error || `HTTP ${res.status}`);
+      } else {
+        setLastSyncAt(new Date());
+        setLastSyncStats(data?.stats || null);
+        // After a sync, reload the visible PTs.
+        await loadPTs();
+      }
+    } catch (e) {
+      setSyncError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   function fmtDate(d: string | null) {
     if (!d) return '-';
     try {
-      return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      return new Date(d).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
     } catch {
       return String(d);
     }
@@ -94,23 +188,110 @@ export default function ShippingQueuePage() {
 
   function fmtMoney(v: any) {
     const n = parseFloat(v);
-    return isNaN(n) ? '-' : `$${n.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+    return isNaN(n)
+      ? '-'
+      : `$${n.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+  }
+
+  function fmtRelative(d: Date | null) {
+    if (!d) return 'never';
+    const diffMs = Date.now() - d.getTime();
+    const diffSec = Math.floor(diffMs / 1000);
+    if (diffSec < 5) return 'just now';
+    if (diffSec < 60) return `${diffSec}s ago`;
+    const min = Math.floor(diffSec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hr = Math.floor(min / 60);
+    return `${hr}h ago`;
   }
 
   return (
     <div className="p-8">
+      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Shipping Module</h1>
           <p className="text-gray-500 mt-1">
-            {loading ? 'Loading…' : `${pts.length} pick ticket${pts.length === 1 ? '' : 's'} ready to ship`}
+            {loading
+              ? 'Loading…'
+              : `${pts.length} pick ticket${pts.length === 1 ? '' : 's'} ready to ship`}
           </p>
         </div>
-        <Link href="/shipping/dev" className="text-xs text-gray-400 hover:text-gray-600" title="Internal dev tools">
-          Dev tools →
-        </Link>
+        <div className="flex items-center gap-3">
+          {/* Sync status pill */}
+          <div className="text-right">
+            <div className="text-xs text-gray-500">
+              Last sync: {fmtRelative(lastSyncAt)}
+            </div>
+            {lastSyncStats && (
+              <div className="text-[11px] text-gray-400">
+                {lastSyncStats.created > 0 && `${lastSyncStats.created} new · `}
+                {lastSyncStats.updated > 0 && `${lastSyncStats.updated} updated · `}
+                {lastSyncStats.scanned} scanned in {lastSyncStats.duration_seconds}s
+              </div>
+            )}
+            {syncError && (
+              <div className="text-[11px] text-red-600">Sync error: {syncError}</div>
+            )}
+          </div>
+          <button
+            onClick={() => runSync()}
+            disabled={syncing}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+          >
+            {syncing ? (
+              <>
+                <svg
+                  className="w-4 h-4 animate-spin"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                  />
+                </svg>
+                Syncing…
+              </>
+            ) : (
+              <>
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"
+                  />
+                </svg>
+                Sync now
+              </>
+            )}
+          </button>
+          <Link
+            href="/shipping/dev"
+            className="text-xs text-gray-400 hover:text-gray-600"
+            title="Internal dev tools"
+          >
+            Dev tools →
+          </Link>
+        </div>
       </div>
 
+      {/* Filters */}
       <div className="card mb-6">
         <div className="flex flex-col md:flex-row gap-4">
           <div className="flex-1">
@@ -129,18 +310,23 @@ export default function ShippingQueuePage() {
           >
             <option value="">All Warehouses</option>
             {warehouses.map((w) => (
-              <option key={w.id} value={w.id}>{w.display_name}</option>
+              <option key={w.id} value={w.id}>
+                {w.display_name}
+              </option>
             ))}
           </select>
         </div>
       </div>
 
+      {/* Table */}
       <div className="card">
         {loading ? (
           <div className="text-center py-12 text-gray-500">Loading pick tickets…</div>
         ) : pts.length === 0 ? (
           <div className="text-center py-12 text-gray-500">
-            {search || warehouseFilter ? 'No pick tickets match your filters' : 'No pick tickets ready to ship'}
+            {search || warehouseFilter
+              ? 'No pick tickets match your filters'
+              : 'No pick tickets ready to ship'}
           </div>
         ) : (
           <>
@@ -163,49 +349,85 @@ export default function ShippingQueuePage() {
                 </thead>
                 <tbody>
                   {pts.map((pt) => (
-                    <tr key={pt.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                    <tr
+                      key={pt.id}
+                      className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
+                    >
                       <td className="table-cell font-medium text-brand-600">
-                        <Link href={`/pick-tickets/${pt.pick_ticket_id}`} className="hover:underline">
+                        <Link
+                          href={`/pick-tickets/${pt.pick_ticket_id}`}
+                          className="hover:underline"
+                        >
                           PT-{pt.pick_ticket_id}
                         </Link>
                       </td>
                       <td className="table-cell text-sm">
                         {pt.apparel_magic_customer_id ? (
-                          <Link href={`/customers/${pt.apparel_magic_customer_id}`} className="text-brand-600 hover:underline">
+                          <Link
+                            href={`/customers/${pt.apparel_magic_customer_id}`}
+                            className="text-brand-600 hover:underline"
+                          >
                             {pt.customer_name ?? '-'}
                           </Link>
-                        ) : (pt.customer_name ?? '-')}
+                        ) : (
+                          pt.customer_name ?? '-'
+                        )}
                       </td>
                       <td className="table-cell text-sm text-gray-600">
-                        <div className="truncate max-w-[200px]">{pt.ship_to_name ?? '-'}</div>
+                        <div className="truncate max-w-[200px]">
+                          {pt.ship_to_name ?? '-'}
+                        </div>
                         <div className="text-xs text-gray-400">
-                          {[pt.ship_to_city, pt.ship_to_state].filter(Boolean).join(', ')} {pt.ship_to_zip ?? ''}
+                          {[pt.ship_to_city, pt.ship_to_state]
+                            .filter(Boolean)
+                            .join(', ')}{' '}
+                          {pt.ship_to_zip ?? ''}
                         </div>
                       </td>
                       <td className="table-cell text-sm">
                         {pt.apparel_magic_order_id ? (
-                          <Link href={`/orders/${pt.apparel_magic_order_id}`} className="text-brand-600 hover:underline">
+                          <Link
+                            href={`/orders/${pt.apparel_magic_order_id}`}
+                            className="text-brand-600 hover:underline"
+                          >
                             #{pt.apparel_magic_order_id}
                           </Link>
-                        ) : '-'}
+                        ) : (
+                          '-'
+                        )}
                       </td>
-                      <td className="table-cell text-sm text-gray-600">{fmtDate(pt.pick_ticket_date)}</td>
-                      <td className="table-cell text-sm text-gray-600">{pt.ship_via ?? '-'}</td>
+                      <td className="table-cell text-sm text-gray-600">
+                        {fmtDate(pt.pick_ticket_date)}
+                      </td>
+                      <td className="table-cell text-sm text-gray-600">
+                        {pt.ship_via ?? '-'}
+                      </td>
                       <td className="table-cell text-sm text-right">{pt.qty ?? 0}</td>
-                      <td className="table-cell text-sm text-right">{pt.qty_cartoned ?? '-'}</td>
-                      <td className="table-cell text-sm text-right">{fmtMoney(pt.total_amount)}</td>
+                      <td className="table-cell text-sm text-right">
+                        {pt.qty_cartoned ?? '-'}
+                      </td>
+                      <td className="table-cell text-sm text-right">
+                        {fmtMoney(pt.total_amount)}
+                      </td>
                       <td className="table-cell">
-                        <span className={`badge ${
-                          pt.wms_status === 'picked' ? 'badge-blue'
-                          : pt.wms_status === 'shipped' || pt.wms_status === 'completed' ? 'badge-green'
-                          : 'badge-yellow'
-                        }`}>
+                        <span
+                          className={`badge ${
+                            pt.wms_status === 'picked'
+                              ? 'badge-blue'
+                              : pt.wms_status === 'shipped' ||
+                                pt.wms_status === 'completed'
+                              ? 'badge-green'
+                              : 'badge-yellow'
+                          }`}
+                        >
                           {pt.wms_status ?? 'pending'}
                         </span>
                       </td>
                       <td className="table-cell">
                         <button
-                          onClick={() => router.push(`/shipping/ship/${pt.pick_ticket_id}`)}
+                          onClick={() =>
+                            router.push(`/shipping/ship/${pt.pick_ticket_id}`)
+                          }
                           className="px-3 py-1.5 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 whitespace-nowrap"
                         >
                           Ship this PT →
@@ -218,10 +440,25 @@ export default function ShippingQueuePage() {
             </div>
 
             <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
-              <p className="text-sm text-gray-500">Page {page + 1}{pts.length === PAGE_SIZE ? ' (more available)' : ''}</p>
+              <p className="text-sm text-gray-500">
+                Page {page + 1}
+                {pts.length === PAGE_SIZE ? ' (more available)' : ''}
+              </p>
               <div className="flex gap-2">
-                <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50">Previous</button>
-                <button onClick={() => setPage((p) => p + 1)} disabled={pts.length < PAGE_SIZE} className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50">Next</button>
+                <button
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                  className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <button
+                  onClick={() => setPage((p) => p + 1)}
+                  disabled={pts.length < PAGE_SIZE}
+                  className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Next
+                </button>
               </div>
             </div>
           </>
