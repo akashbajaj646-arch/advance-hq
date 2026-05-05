@@ -5,10 +5,7 @@
  *   warehouse_id: string,
  *   ship_to: Address,
  *   boxes: Box[],
- *   ship_via: string,
- *   signature_required?: boolean,
- *   saturday_delivery?: boolean,
- *   cod?: CodOptions,
+ *   ship_via?: string,
  * }
  *
  * Returns RateQuote[]. Routes to UPS or EasyPost based on ship_via.
@@ -17,7 +14,7 @@
 import { NextResponse } from 'next/server';
 import { carrierFor, resolveShipVia } from '@/lib/carriers';
 import { getShipFromAddress } from '@/lib/carriers/warehouses';
-import { Box, Address, RateRequest, CodOptions } from '@/lib/carriers/types';
+import { Box, Address, RateRequest } from '@/lib/carriers/types';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -31,45 +28,6 @@ function validateBoxes(boxes: any): Box[] | string {
       return `boxes[${i}] must include numeric length/width/height`;
   }
   return boxes as Box[];
-}
-
-/**
- * Validate the optional COD object on the request. Returns the normalized
- * CodOptions or a human-readable error string. Returns undefined if COD
- * was not provided / not enabled.
- */
-function validateCod(cod: any, boxesLen: number): CodOptions | string | undefined {
-  if (!cod || cod.enabled !== true) return undefined;
-  if (cod.mode !== 'per_box' && cod.mode !== 'per_shipment') {
-    return `cod.mode must be 'per_box' or 'per_shipment'`;
-  }
-  if (
-    cod.payment_type !== 'cashiers_check' &&
-    cod.payment_type !== 'any_check' &&
-    cod.payment_type !== 'cash'
-  ) {
-    return `cod.payment_type must be 'cashiers_check', 'any_check', or 'cash'`;
-  }
-  if (cod.mode === 'per_shipment') {
-    if (typeof cod.total_amount !== 'number' || cod.total_amount <= 0) {
-      return `cod.total_amount must be > 0 for per_shipment mode`;
-    }
-  } else {
-    if (
-      !Array.isArray(cod.per_box_amounts) ||
-      cod.per_box_amounts.length !== boxesLen ||
-      !cod.per_box_amounts.every((n: any) => typeof n === 'number' && n > 0)
-    ) {
-      return `cod.per_box_amounts must be an array of ${boxesLen} positive numbers`;
-    }
-  }
-  return {
-    enabled: true,
-    mode: cod.mode,
-    payment_type: cod.payment_type,
-    total_amount: cod.mode === 'per_shipment' ? cod.total_amount : undefined,
-    per_box_amounts: cod.mode === 'per_box' ? cod.per_box_amounts : undefined,
-  };
 }
 
 export async function POST(req: Request) {
@@ -91,12 +49,6 @@ export async function POST(req: Request) {
 
   const boxes = validateBoxes(body?.boxes);
   if (typeof boxes === 'string') return NextResponse.json({ error: boxes }, { status: 400 });
-
-  const codCheck = validateCod(body?.cod, boxes.length);
-  if (typeof codCheck === 'string') {
-    return NextResponse.json({ error: codCheck }, { status: 400 });
-  }
-  const cod = codCheck;
 
   let resolved;
   try {
@@ -123,9 +75,6 @@ export async function POST(req: Request) {
     shipTo,
     boxes,
     serviceCode: resolved.serviceCode,
-    signature_required: !!body?.signature_required,
-    saturday_delivery: !!body?.saturday_delivery,
-    cod,
   };
 
   try {

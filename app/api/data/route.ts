@@ -18,11 +18,14 @@ const ALLOWED_TABLES = new Set([
   'product_tags', 'product_processes', 'product_royalties',
   'product_emblem_placements', 'product_buyer_filters',
   'custom_products', 'custom_product_images',
-  'inventory', 'print_templates', 'sync_log', 'customer_activity',
+  'inventory', 'print_templates', 'sync_log',
   'divisions', 'vendors', 'size_ranges',
   'portals', 'portal_items', 'portal_attachments',
   'change_requests', 'credit_memos', 'payments',
-  'support_tickets', 'ticket_items', 'ticket_photos', 'ticket_comments',
+  // Shipping module additions
+  'warehouses', 'package_presets', 'address_validations',
+  'notification_templates', 'notification_queue', 'tracking_events',
+  'shipping_service_map',
 ]);
 
 // Allowed RPC functions
@@ -47,136 +50,78 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   if (!session) {
-    return NextResponse.json({ error: 'Session expired' }, { status: 401 });
+    return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
   }
 
+  let body: any;
   try {
-    const body = await request.json();
-    const { action } = body;
-
-    if (action === 'query') {
-      return handleQuery(body);
-    } else if (action === 'rpc') {
-      return handleRpc(body);
-    } else if (action === 'mutate') {
-      return handleMutate(body);
-    } else {
-      return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
-    }
-  } catch (err: any) {
-    console.error('Data API error:', err);
-    return NextResponse.json({ error: err.message || 'Server error' }, { status: 500 });
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
-}
 
-// SELECT queries
-async function handleQuery(body: any) {
-  const { table, select, filters, order, limit, rangeFrom, rangeTo, count, head } = body;
+  const { kind, table, rpc, fn, args, query } = body;
 
+  // RPC path
+  if (kind === 'rpc') {
+    if (!ALLOWED_RPCS.has(fn || rpc)) {
+      return NextResponse.json({ error: `RPC not allowed: ${fn || rpc}` }, { status: 403 });
+    }
+    const { data, error } = await supabaseAdmin.rpc(fn || rpc, args || {});
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ data });
+  }
+
+  // Table query path
   if (!table || !ALLOWED_TABLES.has(table)) {
     return NextResponse.json({ error: `Table not allowed: ${table}` }, { status: 403 });
   }
 
-  let query: any = supabaseAdmin.from(table).select(select || '*', {
-    count: count || undefined,
-    head: head || false,
+  let q: any = supabaseAdmin.from(table).select(query?.select || '*', {
+    count: query?.count,
+    head: query?.head,
   });
 
-  // Apply filters
-  if (filters && Array.isArray(filters)) {
-    for (const f of filters) {
-      switch (f.op) {
-        case 'eq': query = query.eq(f.col, f.val); break;
-        case 'neq': query = query.neq(f.col, f.val); break;
-        case 'gt': query = query.gt(f.col, f.val); break;
-        case 'gte': query = query.gte(f.col, f.val); break;
-        case 'lt': query = query.lt(f.col, f.val); break;
-        case 'lte': query = query.lte(f.col, f.val); break;
-        case 'like': query = query.like(f.col, f.val); break;
-        case 'ilike': query = query.ilike(f.col, f.val); break;
-        case 'is': query = query.is(f.col, f.val); break;
-        case 'in': query = query.in(f.col, f.val); break;
-        case 'not_is': query = query.not(f.col, 'is', f.val); break;
-        case 'not_eq': query = query.not(f.col, 'eq', f.val); break;
-        case 'or': query = query.or(f.val); break;
-        default: break;
+  if (Array.isArray(query?.filters)) {
+    for (const f of query.filters) {
+      const { op, col, val } = f;
+      switch (op) {
+        case 'eq': q = q.eq(col, val); break;
+        case 'neq': q = q.neq(col, val); break;
+        case 'gt': q = q.gt(col, val); break;
+        case 'gte': q = q.gte(col, val); break;
+        case 'lt': q = q.lt(col, val); break;
+        case 'lte': q = q.lte(col, val); break;
+        case 'like': q = q.like(col, val); break;
+        case 'ilike': q = q.ilike(col, val); break;
+        case 'is': q = q.is(col, val); break;
+        case 'in': q = q.in(col, val); break;
+        case 'not_is': q = q.not(col, 'is', val); break;
+        case 'not_eq': q = q.not(col, 'eq', val); break;
+        case 'or': q = q.or(val); break;
       }
     }
   }
 
-  // Apply ordering
-  if (order && Array.isArray(order)) {
-    for (const o of order) {
-      query = query.order(o.col, { ascending: o.asc !== false });
+  if (Array.isArray(query?.order)) {
+    for (const o of query.order) {
+      q = q.order(o.col, { ascending: !!o.asc });
     }
   }
 
-  if (limit) query = query.limit(limit);
+  if (typeof query?.limit === 'number') q = q.limit(query.limit);
 
-  // Apply range (pagination)
-  if (rangeFrom !== undefined && rangeTo !== undefined) {
-    query = query.range(rangeFrom, rangeTo);
+  if (typeof query?.rangeFrom === 'number' && typeof query?.rangeTo === 'number') {
+    q = q.range(query.rangeFrom, query.rangeTo);
   }
 
-  // For maybeSingle
-  if (body.single) {
-    const result = await query.maybeSingle();
-    return NextResponse.json({ data: result.data, count: null, error: result.error?.message });
+  if (query?.single) {
+    const { data, error, count } = await (q as any).maybeSingle();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ data, count: count ?? null });
   }
 
-  const { data, count: cnt, error } = await query;
+  const { data, error, count } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ data, count: cnt });
-}
-
-// RPC calls
-async function handleRpc(body: any) {
-  const { fn, params } = body;
-
-  if (!fn || !ALLOWED_RPCS.has(fn)) {
-    return NextResponse.json({ error: `RPC not allowed: ${fn}` }, { status: 403 });
-  }
-
-  const { data, error } = await supabaseAdmin.rpc(fn, params || {});
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ data });
-}
-
-// INSERT/UPDATE/DELETE for print_templates (and future writes)
-const WRITABLE_TABLES = new Set(['print_templates']);
-
-async function handleMutate(body: any) {
-  const { table, type, data: payload, filters } = body;
-
-  if (!table || !WRITABLE_TABLES.has(table)) {
-    return NextResponse.json({ error: `Write not allowed: ${table}` }, { status: 403 });
-  }
-
-  if (type === 'insert') {
-    const { data, error } = await supabaseAdmin.from(table).insert(payload).select().single();
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ data });
-  }
-
-  if (type === 'update' && filters) {
-    let query: any = supabaseAdmin.from(table).update(payload);
-    for (const f of filters) {
-      if (f.op === 'eq') query = query.eq(f.col, f.val);
-    }
-    const { data, error } = await query.select();
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ data });
-  }
-
-  if (type === 'delete' && filters) {
-    let query: any = supabaseAdmin.from(table).delete();
-    for (const f of filters) {
-      if (f.op === 'eq') query = query.eq(f.col, f.val);
-    }
-    const { error } = await query;
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ data: null });
-  }
-
-  return NextResponse.json({ error: 'Invalid mutation type' }, { status: 400 });
+  return NextResponse.json({ data, count: count ?? null });
 }

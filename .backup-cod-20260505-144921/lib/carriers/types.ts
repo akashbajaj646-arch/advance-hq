@@ -54,44 +54,6 @@ export interface Box {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Shipping options (COD, signature, Saturday)
-// ────────────────────────────────────────────────────────────────────
-
-/**
- * The form of payment the carrier will accept on a COD delivery.
- * UPS uses these to populate the COD funds code printed on the label.
- *
- * UPS REST CODFundsCode mapping (verified by probe against UPS CIE):
- *   cashiers_check → '0'   Cashier's check or money order only
- *   any_check      → '8'   Any payment (personal, business, cashier check)
- *   cash           → '9'   Cash
- *
- * '1' is NOT a valid UPS REST funds code despite some legacy docs implying it
- * is — UPS rejects with a misleading "Missing COD funds code" error. Don't
- * use it.
- */
-export type CodPaymentType = 'cashiers_check' | 'any_check' | 'cash';
-
-export interface CodOptions {
-  enabled: boolean;
-  /**
-   * 'per_box': each box has its own COD amount (per_box_amounts populated).
-   * 'per_shipment': single COD attached to the first box only with
-   *   total_amount as the value.
-   */
-  mode: 'per_box' | 'per_shipment';
-  /** Per-shipment mode only. Ignored if mode === 'per_box'. */
-  total_amount?: number;
-  /** Per-box mode only. Length must equal boxes.length when populated. */
-  per_box_amounts?: number[];
-  /**
-   * Required when enabled is true. The shipper picks one explicitly — there
-   * is no default since the user accepts all three forms of payment.
-   */
-  payment_type: CodPaymentType;
-}
-
-// ────────────────────────────────────────────────────────────────────
 // Rates
 // ────────────────────────────────────────────────────────────────────
 
@@ -100,22 +62,6 @@ export interface RateRequest {
   shipTo: Address;
   boxes: Box[];
   serviceCode?: string;   // optional — if set, only return this service
-  /**
-   * Adds a signature requirement at delivery (UPS DCISType=2). Carriers may
-   * include a small surcharge in the rate when this is set. Defaults to false.
-   */
-  signature_required?: boolean;
-  /**
-   * UPS Saturday Delivery accessory. Defaults to false. USPS will pass this
-   * flag through but USPS doesn't have an equivalent accessory in the same
-   * sense — it's effectively a no-op for USPS.
-   */
-  saturday_delivery?: boolean;
-  /**
-   * Optional COD configuration. When enabled, COD is added as a per-package
-   * service option (UPS) or as shipment-level options (EasyPost USPS).
-   */
-  cod?: CodOptions;
 }
 
 export interface RateQuote {
@@ -138,12 +84,6 @@ export interface LabelRequest {
   serviceCode: string;       // mapped from ship_via via shipping_service_map
   reference?: string;        // shows on label as customer ref (e.g. PT number)
   shipDate?: string;         // ISO date; defaults to today
-  /** See RateRequest.signature_required. */
-  signature_required?: boolean;
-  /** See RateRequest.saturday_delivery. */
-  saturday_delivery?: boolean;
-  /** See RateRequest.cod. */
-  cod?: CodOptions;
 }
 
 export interface BoxLabel {

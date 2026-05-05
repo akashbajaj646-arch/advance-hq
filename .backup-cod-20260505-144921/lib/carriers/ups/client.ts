@@ -14,13 +14,6 @@
  *
  * Note: Rating expects "PackagingType" while Shipping expects "Packaging"
  * for the same field. boxToUpsPackage() takes an apiSurface flag for this.
- *
- * Per-package vs per-shipment options:
- *   - COD: per-package only. In 'per_box' mode, each package gets its own
- *     COD amount. In 'per_shipment' mode, only the first (control) package
- *     gets COD with the full total — boxes 2..N have no COD attached.
- *   - Signature: per-package, applied uniformly to every package when set.
- *   - Saturday Delivery: shipment-level only (ShipmentServiceOptions).
  */
 
 import {
@@ -44,8 +37,6 @@ import {
   addressToShipToBlock,
   addressToShipperBlock,
   boxToUpsPackage,
-  COD_FUNDS_CODE,
-  UpsPackageOptions,
 } from './mappers';
 
 const NOT_IMPLEMENTED = 'Not implemented yet';
@@ -101,41 +92,6 @@ function extractUpsError(json: any, fallback: string): string {
     return errs.map((e: any) => `${e.code}: ${e.message}`).join('; ');
   }
   return json?.response?.message || fallback;
-}
-
-/**
- * Compute the UpsPackageOptions for each package given a RateRequest or
- * LabelRequest. Same logic for both surfaces, factored out so rates and
- * labels stay in lockstep.
- *
- * Returns an array of length boxes.length — one options object per box,
- * indexed by position.
- */
-function buildPackageOptionsForBoxes(
-  req: RateRequest | LabelRequest
-): UpsPackageOptions[] {
-  const fundsCode = req.cod?.enabled
-    ? COD_FUNDS_CODE[req.cod.payment_type]
-    : undefined;
-
-  return req.boxes.map((_, idx) => {
-    let codAmount: number | undefined;
-    if (req.cod?.enabled) {
-      if (req.cod.mode === 'per_box') {
-        codAmount = req.cod.per_box_amounts?.[idx];
-      } else {
-        // per_shipment: only the first box (the "control" package) gets COD
-        // with the full total amount. Boxes 2..N have no COD attached.
-        codAmount = idx === 0 ? req.cod.total_amount : undefined;
-      }
-    }
-
-    return {
-      codAmount,
-      codFundsCode: fundsCode,
-      signatureRequired: !!req.signature_required,
-    };
-  });
 }
 
 export class UpsClient implements CarrierClient {
@@ -235,29 +191,12 @@ export class UpsClient implements CarrierClient {
     const requestOption = req.serviceCode ? 'Rate' : 'Shop';
     const path = `/api/rating/v2403/${requestOption}`;
 
-    // INTENTIONAL: We do NOT pass COD / signature / Saturday options to the
-    // Rating endpoint. UPS CIE's Rating API rejects these accessories with
-    //   "111262: The accessory is not valid with the selected option"
-    // even when the corresponding Shipping API call (label creation) accepts
-    // them just fine for the same shipment.
-    //
-    // Net effect: rate preview shows the BASE shipping cost without
-    // accessory surcharges (COD ~$15-19, signature ~$5.55, Saturday ~$16).
-    // Label creation still sends the full options and prints the correct
-    // total. The actual cost reflected back in the post-print modal is
-    // authoritative — the rate preview is just a sanity check.
-    //
-    // If/when UPS fixes CIE Rating's accessory validation (or in production
-    // where it may behave differently), we can restore the full options
-    // here by re-introducing buildPackageOptionsForBoxes(req).
     const shipment: any = {
       Shipper: addressToShipperBlock(req.shipFrom, shipperNumber()),
       ShipTo: addressToShipToBlock(req.shipTo),
       ShipFrom: addressToShipFromBlock(req.shipFrom),
-      // Rating uses 'PackagingType' field. No package options on Rating.
-      Package: req.boxes.map((b, i) =>
-        boxToUpsPackage(b, `box-${i + 1}`, 'rating')
-      ),
+      // Rating uses 'PackagingType' field
+      Package: req.boxes.map((b, i) => boxToUpsPackage(b, `box-${i + 1}`, 'rating')),
     };
 
     if (req.serviceCode) {
@@ -312,36 +251,6 @@ export class UpsClient implements CarrierClient {
   async createLabel(req: LabelRequest): Promise<LabelResult> {
     const path = `/api/shipments/v2403/ship`;
 
-    const pkgOpts = buildPackageOptionsForBoxes(req);
-
-    const shipment: any = {
-      Description: 'Apparel',
-      Shipper: addressToShipperBlock(req.shipFrom, shipperNumber()),
-      ShipTo: addressToShipToBlock(req.shipTo),
-      ShipFrom: addressToShipFromBlock(req.shipFrom),
-      PaymentInformation: {
-        ShipmentCharge: {
-          Type: '01',
-          BillShipper: { AccountNumber: shipperNumber() },
-        },
-      },
-      Service: {
-        Code: req.serviceCode,
-        Description: serviceName(req.serviceCode),
-      },
-      // Shipping uses 'Packaging' field (not 'PackagingType')
-      Package: req.boxes.map((b, i) =>
-        boxToUpsPackage(b, b.reference || req.reference || `box-${i + 1}`, 'shipping', pkgOpts[i])
-      ),
-    };
-
-    if (req.saturday_delivery) {
-      shipment.ShipmentServiceOptions = {
-        ...(shipment.ShipmentServiceOptions || {}),
-        SaturdayDelivery: '', // empty string = enable
-      };
-    }
-
     const body = {
       ShipmentRequest: {
         Request: {
@@ -351,7 +260,26 @@ export class UpsClient implements CarrierClient {
           SubVersion: '2403',
           RequestOption: 'nonvalidate',
         },
-        Shipment: shipment,
+        Shipment: {
+          Description: 'Apparel',
+          Shipper: addressToShipperBlock(req.shipFrom, shipperNumber()),
+          ShipTo: addressToShipToBlock(req.shipTo),
+          ShipFrom: addressToShipFromBlock(req.shipFrom),
+          PaymentInformation: {
+            ShipmentCharge: {
+              Type: '01',
+              BillShipper: { AccountNumber: shipperNumber() },
+            },
+          },
+          Service: {
+            Code: req.serviceCode,
+            Description: serviceName(req.serviceCode),
+          },
+          // Shipping uses 'Packaging' field (not 'PackagingType')
+          Package: req.boxes.map((b, i) =>
+            boxToUpsPackage(b, b.reference || req.reference || `box-${i + 1}`, 'shipping')
+          ),
+        },
         LabelSpecification: {
           LabelImageFormat: { Code: 'ZPL', Description: 'ZPL' },
           LabelStockSize: { Height: '6', Width: '4' },

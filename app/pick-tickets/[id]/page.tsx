@@ -1,12 +1,13 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { db } from '@/lib/db';
 import { generatePickTicketPDF } from '@/lib/pdf-generator';
 
 export default function PickTicketDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const id = params.id as string;
   const [pt, setPt] = useState<any>(null);
   const [items, setItems] = useState<any[]>([]);
@@ -38,7 +39,21 @@ export default function PickTicketDetailPage() {
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
         <div className="flex items-start justify-between mb-4">
           <div><h1 className="text-2xl font-bold text-gray-900">Pick Ticket {pt.pick_ticket_id}</h1><p className="text-sm text-gray-400 mt-1">Customer: <Link href={`/customers/${pt.apparel_magic_customer_id || pt.account_number}`} className="text-brand-600 hover:underline font-medium">{pt.customer_name || 'Unknown'}</Link>{pt.apparel_magic_order_id && <> | Order: <Link href={`/orders/${pt.apparel_magic_order_id}`} className="text-brand-600 hover:underline">#{pt.apparel_magic_order_id}</Link></>}{pt.invoice_id && <> | Invoice: <Link href={`/invoices/${pt.invoice_id}`} className="text-brand-600 hover:underline">#{pt.invoice_id}</Link></>}</p></div>
-          <div className="flex items-center gap-2">{pt.is_void && <span className="px-3 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700">VOID</span>}<button onClick={() => generatePickTicketPDF(pt, items, 'download', [])} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50">Download PDF</button></div>
+          <div className="flex items-center gap-2">
+            {pt.is_void && <span className="px-3 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700">VOID</span>}
+            <button onClick={() => generatePickTicketPDF(pt, items, 'download', [])} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50">Download PDF</button>
+            {!pt.is_void && (
+              <button
+                onClick={() => router.push(`/shipping/ship/${pt.pick_ticket_id}`)}
+                className="px-4 py-1.5 text-sm font-medium bg-brand-600 text-white rounded-lg hover:bg-brand-700 inline-flex items-center gap-1.5"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
+                </svg>
+                Ship this PT
+              </button>
+            )}
+          </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-1">{fieldRow('Date', fmtDate(pt.pick_ticket_date))}{fieldRow('Due Date', fmtDate(pt.date_due))}{fieldRow('WMS Status', pt.wms_status)}{fieldRow('Carton Status', pt.carton_status)}{fieldRow('Total Amount', fmt(pt.total_amount))}{fieldRow('Qty', pt.qty)}{fieldRow('Ship Via', pt.ship_via)}{fieldRow('Warehouse', pt.warehouse_id)}</div>
       </div>

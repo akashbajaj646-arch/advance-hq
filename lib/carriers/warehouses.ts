@@ -2,16 +2,11 @@
  * Warehouse helper. Returns the appropriate ship-from address for a
  * warehouse based on the carrier being used.
  *
- * UPS Customer Integration Environment (CIE) only validates NY/CA addresses,
- * so for UPS we use the CIE test address (a fake CA address) when in sandbox.
+ * The warehouse can be looked up by either:
+ *   - Our slug ('leuning', 'state') — used by dev tools and admin UIs
+ *   - ApparelMagic's numeric warehouse_id ('1', '2') — what comes from PT data
  *
- * EasyPost has no equivalent sandbox restriction — it ALWAYS validates
- * against real USPS data even in test mode. So for EasyPost we always
- * use the real NJ warehouse address, even in dev/test.
- *
- * This is the only place in the codebase that should know about the
- * CIE vs production address split. Everything else just calls
- * getShipFromAddress(warehouseId, carrier).
+ * Both resolve to the same warehouse row.
  */
 
 import { supabaseAdmin } from '@/lib/supabase-admin';
@@ -19,6 +14,7 @@ import { Address, CarrierKey } from './types';
 
 export interface WarehouseRow {
   id: string;
+  am_warehouse_id: string | null;
   display_name: string;
   company_name: string;
   contact_name: string | null;
@@ -41,16 +37,36 @@ export interface WarehouseRow {
   cie_country: string | null;
 }
 
-export async function getWarehouse(id: string): Promise<WarehouseRow> {
-  const { data, error } = await supabaseAdmin
+export async function getWarehouse(idOrAmId: string): Promise<WarehouseRow> {
+  const lookup = String(idOrAmId).trim();
+  if (!lookup) throw new Error('warehouse id is required');
+
+  let { data, error } = await supabaseAdmin
     .from('warehouses')
     .select('*')
-    .eq('id', id)
+    .eq('id', lookup)
     .eq('is_active', true)
     .maybeSingle();
 
   if (error) throw new Error(`warehouse lookup failed: ${error.message}`);
-  if (!data) throw new Error(`warehouse not found: ${id}`);
+
+  if (!data) {
+    const r = await supabaseAdmin
+      .from('warehouses')
+      .select('*')
+      .eq('am_warehouse_id', lookup)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (r.error) throw new Error(`warehouse lookup failed: ${r.error.message}`);
+    data = r.data;
+  }
+
+  if (!data) {
+    throw new Error(
+      `warehouse not found: ${lookup}. Tried both slug ID and ApparelMagic ID. ` +
+        `If this is a new AM warehouse, insert a row in the warehouses table with am_warehouse_id='${lookup}'.`
+    );
+  }
   return data as WarehouseRow;
 }
 
@@ -94,31 +110,16 @@ function cieTestAddress(w: WarehouseRow): Address | null {
   };
 }
 
-/**
- * Returns the ship-from Address for a warehouse, picking based on carrier.
- *
- * - UPS in sandbox (UPS_ENV != 'production'): uses the CIE test address
- *   because UPS CIE only accepts NY/CA addresses.
- * - UPS in production OR EasyPost (any env): uses the real warehouse
- *   address. EasyPost validates against real USPS data even in test mode,
- *   so fake addresses won't work there.
- *
- * If carrier is omitted, defaults to behavior optimized for whichever
- * carrier sandbox is most restrictive (UPS), to be safe.
- */
 export async function getShipFromAddress(
-  warehouseId: string,
+  warehouseIdOrAmId: string,
   carrier?: CarrierKey
 ): Promise<Address> {
-  const w = await getWarehouse(warehouseId);
+  const w = await getWarehouse(warehouseIdOrAmId);
 
-  // EasyPost: always use real address. EasyPost validates against real USPS
-  // data even in test mode and rejects fake addresses with E.ADDRESS.NOT_FOUND.
   if (carrier === 'easypost_usps') {
     return realAddress(w);
   }
 
-  // UPS (or unspecified): swap to CIE test address in non-prod when available.
   const isProd = process.env.UPS_ENV === 'production';
   if (!isProd) {
     const test = cieTestAddress(w);

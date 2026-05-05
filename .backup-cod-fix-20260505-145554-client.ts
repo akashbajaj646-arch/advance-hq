@@ -235,33 +235,27 @@ export class UpsClient implements CarrierClient {
     const requestOption = req.serviceCode ? 'Rate' : 'Shop';
     const path = `/api/rating/v2403/${requestOption}`;
 
-    // INTENTIONAL: We do NOT pass COD / signature / Saturday options to the
-    // Rating endpoint. UPS CIE's Rating API rejects these accessories with
-    //   "111262: The accessory is not valid with the selected option"
-    // even when the corresponding Shipping API call (label creation) accepts
-    // them just fine for the same shipment.
-    //
-    // Net effect: rate preview shows the BASE shipping cost without
-    // accessory surcharges (COD ~$15-19, signature ~$5.55, Saturday ~$16).
-    // Label creation still sends the full options and prints the correct
-    // total. The actual cost reflected back in the post-print modal is
-    // authoritative — the rate preview is just a sanity check.
-    //
-    // If/when UPS fixes CIE Rating's accessory validation (or in production
-    // where it may behave differently), we can restore the full options
-    // here by re-introducing buildPackageOptionsForBoxes(req).
+    const pkgOpts = buildPackageOptionsForBoxes(req);
+
     const shipment: any = {
       Shipper: addressToShipperBlock(req.shipFrom, shipperNumber()),
       ShipTo: addressToShipToBlock(req.shipTo),
       ShipFrom: addressToShipFromBlock(req.shipFrom),
-      // Rating uses 'PackagingType' field. No package options on Rating.
+      // Rating uses 'PackagingType' field
       Package: req.boxes.map((b, i) =>
-        boxToUpsPackage(b, `box-${i + 1}`, 'rating')
+        boxToUpsPackage(b, `box-${i + 1}`, 'rating', pkgOpts[i])
       ),
     };
 
     if (req.serviceCode) {
       shipment.Service = { Code: req.serviceCode, Description: serviceName(req.serviceCode) };
+    }
+
+    if (req.saturday_delivery) {
+      shipment.ShipmentServiceOptions = {
+        ...(shipment.ShipmentServiceOptions || {}),
+        SaturdayDelivery: '', // empty string = enable
+      };
     }
 
     const body = {

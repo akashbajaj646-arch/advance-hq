@@ -16,46 +16,11 @@
  *       * Rating API uses "PackagingType"
  *       * Shipping API uses "Packaging"
  *     boxToUpsPackage() takes an `apiSurface` flag to pick the right one.
- *
- *   - COD: belongs in PackageServiceOptions.COD per package, NOT at shipment
- *     level. Shipment-level COD returns "accessory cannot be added" for
- *     ground service.
- *   - CODFundsCode values verified by probe against UPS CIE:
- *       '0' = Cashier check / money order, '8' = Any check, '9' = Cash.
- *       '1' is INVALID despite some UPS docs claiming it is — rejects with
- *       a misleading "Missing COD funds code" error.
- *   - Signature: PackageServiceOptions.DeliveryConfirmation { DCISType: '2' }
- *     for adult signature use '3' (not currently surfaced in the UI).
- *   - Saturday Delivery: ShipmentServiceOptions.SaturdayDelivery (empty
- *     string = enable). Goes at shipment level, not package level.
  */
 
-import { Address, Box, CodPaymentType } from '../types';
+import { Address, Box } from '../types';
 
 export type UpsApiSurface = 'rating' | 'shipping';
-
-/**
- * UPS REST CODFundsCode values, verified by probe against UPS CIE.
- *
- * CRITICAL: The mapping below is industry-convention. The first real
- * production COD label should be inspected to confirm the printed funds
- * description matches the user's selection. If it doesn't, swap the values
- * here — UPS docs are notoriously inconsistent on these codes.
- */
-export const COD_FUNDS_CODE: Record<CodPaymentType, string> = {
-  cashiers_check: '0', // Cashier's check or money order only
-  any_check: '8',      // Any check (cashier, business, personal)
-  cash: '9',           // Cash
-};
-
-export interface UpsPackageOptions {
-  /** Per-package COD amount in USD. Set to 0 / undefined for no COD. */
-  codAmount?: number;
-  /** UPS CODFundsCode value (mapped from CodPaymentType via COD_FUNDS_CODE). */
-  codFundsCode?: string;
-  /** Whether to require a signature on delivery for this package. */
-  signatureRequired?: boolean;
-}
 
 export function digitsOnlyPhone(phone: string | undefined): string {
   if (!phone) return '5555555555';
@@ -132,16 +97,11 @@ export function addressToShipFromBlock(addr: Address) {
  *   - 'rating'   → uses "PackagingType" (Rating API)
  *   - 'shipping' → uses "Packaging" (Shipping API)
  * Yes, these really do differ in UPS's REST API. Not a typo.
- *
- * `options` lets the caller add per-package COD, signature, or both. These
- * apply to the Shipping API (and Rating, where the rate quote should reflect
- * any accessory surcharges — UPS does include them in the quote).
  */
 export function boxToUpsPackage(
   box: Box,
   reference?: string,
-  apiSurface: UpsApiSurface = 'rating',
-  options?: UpsPackageOptions
+  apiSurface: UpsApiSurface = 'rating'
 ) {
   const packageTypeBlock = { Code: '02', Description: 'Customer Supplied Package' };
 
@@ -171,48 +131,13 @@ export function boxToUpsPackage(
     ];
   }
 
-  // PackageServiceOptions is the dumping ground for per-package accessories.
-  // Build it once with everything that applies and only attach if non-empty.
-  const pso: any = {};
-
   if (box.insuredValueUsd && box.insuredValueUsd > 0) {
-    pso.DeclaredValue = {
-      CurrencyCode: 'USD',
-      MonetaryValue: box.insuredValueUsd.toFixed(2),
-    };
-  }
-
-  if (options?.codAmount && options.codAmount > 0) {
-    pso.COD = {
-      // Defaults to '0' (cashier's check) if no code is supplied. The caller
-      // should always pass codFundsCode when COD is enabled though.
-      CODFundsCode: options.codFundsCode || '0',
-      CODAmount: {
+    pkg.PackageServiceOptions = {
+      DeclaredValue: {
         CurrencyCode: 'USD',
-        MonetaryValue: options.codAmount.toFixed(2),
+        MonetaryValue: box.insuredValueUsd.toFixed(2),
       },
     };
-  }
-
-  // Signature confirmation (DeliveryConfirmation accessory).
-  //
-  // IMPORTANT: When COD is on this package, we do NOT add a separate
-  // DeliveryConfirmation. UPS rejects COD + DeliveryConfirmation as
-  // "121262: Accessory may not be combined with the accessory" because COD
-  // inherently requires a signature — the driver collects payment AND gets
-  // a signature in the same transaction. Adding a second signature accessory
-  // is treated as a duplicate.
-  //
-  // So: signature is already implicit when COD is on. We only set the
-  // DeliveryConfirmation accessory when COD is OFF.
-  if (options?.signatureRequired && !(options.codAmount && options.codAmount > 0)) {
-    // DCISType: 1 = no signature required (default; same as not setting), 2 = signature
-    // required (any age), 3 = adult signature required (21+). We use 2.
-    pso.DeliveryConfirmation = { DCISType: '2' };
-  }
-
-  if (Object.keys(pso).length > 0) {
-    pkg.PackageServiceOptions = pso;
   }
 
   return pkg;

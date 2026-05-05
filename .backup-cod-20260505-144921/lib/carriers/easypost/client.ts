@@ -8,15 +8,6 @@
  * Conceptually equivalent to UPS's "one shipment, many packages" model from
  * the user's perspective, but the carrier API surface differs.
  *
- * Per-package vs per-shipment options for COD/sig/Saturday:
- *   - Signature: applied per shipment uniformly when set.
- *   - COD per_box: each EasyPost shipment gets the matching box's COD amount.
- *   - COD per_shipment: only the FIRST shipment carries the full COD total
- *     (mirrors how UPS handles per_shipment mode). Boxes 2..N have no COD.
- *   - Saturday Delivery: applied per shipment when set. USPS doesn't really
- *     have Saturday Delivery as an accessory — the flag is essentially a
- *     no-op for USPS but EasyPost will pass it through without erroring.
- *
  * EasyPost endpoints used:
  *   POST /v2/addresses                   (Week 1 — address validation)
  *   POST /v2/shipments                   (creates shipment, returns rates[])
@@ -32,8 +23,6 @@ import {
   BoxLabel,
   CarrierClient,
   CarrierKey,
-  CodOptions,
-  CodPaymentType,
   LabelRequest,
   LabelResult,
   RateQuote,
@@ -52,16 +41,6 @@ import {
 
 const NOT_IMPLEMENTED = 'Not implemented yet';
 const EASYPOST_BASE = 'https://api.easypost.com/v2';
-
-/**
- * EasyPost USPS COD method strings. Maps from our payment_type to USPS's
- * accepted COD method values.
- */
-const EASYPOST_COD_METHOD: Record<CodPaymentType, string> = {
-  cashiers_check: 'MONEY_ORDER',
-  any_check: 'CHECK',
-  cash: 'CASH',
-};
 
 function easypostKey(): string {
   const key =
@@ -119,54 +98,6 @@ function extractEasypostError(json: any, fallback: string): string {
     return json.error.message;
   }
   return fallback;
-}
-
-/**
- * Compute the COD amount for the package at index `idx` given the COD
- * options on the request. Returns 0 / undefined when no COD applies to
- * this package.
- */
-function codAmountForBox(
-  cod: CodOptions | undefined,
-  idx: number
-): number | undefined {
-  if (!cod?.enabled) return undefined;
-  if (cod.mode === 'per_box') {
-    return cod.per_box_amounts?.[idx];
-  }
-  // per_shipment: only the first parcel gets the COD with full total.
-  return idx === 0 ? cod.total_amount : undefined;
-}
-
-/**
- * Apply our shipping options (signature, COD, Saturday) to a URLSearchParams
- * that already has the base shipment fields populated. Used by both rate
- * quoting and label creation so the surfaces stay in sync.
- */
-function applyShipmentOptions(
-  params: URLSearchParams,
-  req: RateRequest | LabelRequest,
-  boxIdx: number
-) {
-  if (req.signature_required) {
-    params.set('shipment[options][signature_confirmation]', 'SIGNATURE');
-  }
-
-  const codAmount = codAmountForBox(req.cod, boxIdx);
-  if (codAmount && codAmount > 0 && req.cod) {
-    params.set('shipment[options][cod_amount]', codAmount.toFixed(2));
-    params.set(
-      'shipment[options][cod_method]',
-      EASYPOST_COD_METHOD[req.cod.payment_type]
-    );
-  }
-
-  if (req.saturday_delivery) {
-    // USPS doesn't really do Saturday Delivery as an accessory. EasyPost will
-    // pass this flag through; whether the carrier honors it is up to USPS.
-    // We send it for parity with UPS's UI; a no-op is acceptable.
-    params.set('shipment[options][saturday_delivery]', 'true');
-  }
 }
 
 export class EasyPostClient implements CarrierClient {
@@ -264,10 +195,6 @@ export class EasyPostClient implements CarrierClient {
     appendFormParams(params, 'shipment[from_address]', addressToEasypostFields(req.shipFrom));
     appendFormParams(params, 'shipment[parcel]', boxToEasypostParcel(firstBox));
 
-    // Apply signature / COD / Saturday options for the first box. These can
-    // affect the rate quote (USPS surcharges for signature confirmation).
-    applyShipmentOptions(params, req, 0);
-
     const { res, json } = await easypostFetch('/shipments', {
       method: 'POST',
       form: params,
@@ -345,9 +272,6 @@ export class EasyPostClient implements CarrierClient {
       // when this option is set.
       createParams.set('shipment[options][label_format]', 'ZPL');
       createParams.set('shipment[options][label_size]', '4x6');
-
-      // Apply signature / COD / Saturday options for THIS specific box.
-      applyShipmentOptions(createParams, req, i);
 
       const { res: createRes, json: createJson } = await easypostFetch('/shipments', {
         method: 'POST',

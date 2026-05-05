@@ -3,17 +3,13 @@
  *
  * Creates labels via the resolved carrier (UPS or EasyPost USPS) and persists
  * the shipment + boxes to Supabase.
- *
- * Accepts (optional) signature_required, saturday_delivery, and cod options.
- * The COD/sig/Saturday flags are persisted to shipments + shipment_boxes
- * after the label is created so they're queryable for reporting.
  */
 
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { carrierFor, resolveShipVia } from '@/lib/carriers';
 import { getShipFromAddress } from '@/lib/carriers/warehouses';
-import { Address, Box, CodOptions, LabelRequest } from '@/lib/carriers/types';
+import { Address, Box, LabelRequest } from '@/lib/carriers/types';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -27,40 +23,6 @@ function validateBoxes(boxes: any): Box[] | string {
       return `boxes[${i}] must include numeric length/width/height`;
   }
   return boxes as Box[];
-}
-
-function validateCod(cod: any, boxesLen: number): CodOptions | string | undefined {
-  if (!cod || cod.enabled !== true) return undefined;
-  if (cod.mode !== 'per_box' && cod.mode !== 'per_shipment') {
-    return `cod.mode must be 'per_box' or 'per_shipment'`;
-  }
-  if (
-    cod.payment_type !== 'cashiers_check' &&
-    cod.payment_type !== 'any_check' &&
-    cod.payment_type !== 'cash'
-  ) {
-    return `cod.payment_type must be 'cashiers_check', 'any_check', or 'cash'`;
-  }
-  if (cod.mode === 'per_shipment') {
-    if (typeof cod.total_amount !== 'number' || cod.total_amount <= 0) {
-      return `cod.total_amount must be > 0 for per_shipment mode`;
-    }
-  } else {
-    if (
-      !Array.isArray(cod.per_box_amounts) ||
-      cod.per_box_amounts.length !== boxesLen ||
-      !cod.per_box_amounts.every((n: any) => typeof n === 'number' && n > 0)
-    ) {
-      return `cod.per_box_amounts must be an array of ${boxesLen} positive numbers`;
-    }
-  }
-  return {
-    enabled: true,
-    mode: cod.mode,
-    payment_type: cod.payment_type,
-    total_amount: cod.mode === 'per_shipment' ? cod.total_amount : undefined,
-    per_box_amounts: cod.mode === 'per_box' ? cod.per_box_amounts : undefined,
-  };
 }
 
 export async function POST(req: Request) {
@@ -86,15 +48,6 @@ export async function POST(req: Request) {
 
   const boxes = validateBoxes(body?.boxes);
   if (typeof boxes === 'string') return NextResponse.json({ error: boxes }, { status: 400 });
-
-  const codCheck = validateCod(body?.cod, boxes.length);
-  if (typeof codCheck === 'string') {
-    return NextResponse.json({ error: codCheck }, { status: 400 });
-  }
-  const cod = codCheck;
-
-  const signatureRequired = !!body?.signature_required;
-  const saturdayDelivery = !!body?.saturday_delivery;
 
   let resolved;
   try {
@@ -122,9 +75,6 @@ export async function POST(req: Request) {
     boxes,
     serviceCode: resolved.serviceCode,
     reference,
-    signature_required: signatureRequired,
-    saturday_delivery: saturdayDelivery,
-    cod,
   };
 
   let result;
@@ -148,14 +98,6 @@ export async function POST(req: Request) {
     resolved.carrier === 'easypost_usps'
       ? result.carrierShipmentId || null
       : null;
-
-  // Compute the COD total once for persistence. For per_box mode we sum
-  // the entered amounts; for per_shipment mode the total is supplied directly.
-  const codTotal = cod
-    ? cod.mode === 'per_shipment'
-      ? cod.total_amount ?? 0
-      : (cod.per_box_amounts ?? []).reduce((s, n) => s + (n || 0), 0)
-    : null;
 
   const { data: shipmentRow, error: insertErr } = await supabaseAdmin
     .from('shipments')
@@ -183,13 +125,6 @@ export async function POST(req: Request) {
       ship_to_state: shipTo.state,
       ship_to_zip: shipTo.zip,
       ship_to_country: shipTo.country || 'US',
-      // COD / signature / Saturday flags
-      signature_required: signatureRequired,
-      saturday_delivery: saturdayDelivery,
-      cod_enabled: !!cod,
-      cod_mode: cod ? cod.mode : null,
-      cod_total_amount: codTotal,
-      cod_payment_type: cod ? cod.payment_type : null,
     })
     .select('id')
     .single();
@@ -215,11 +150,6 @@ export async function POST(req: Request) {
     label_zpl: b.zpl || null,
     label_pdf_url: b.pdfUrl || null,
     cost: b.costUsd ?? null,
-    // Per-box COD amount (only populated in per_box mode)
-    cod_amount:
-      cod && cod.mode === 'per_box'
-        ? cod.per_box_amounts?.[i] ?? null
-        : null,
   }));
   const { error: boxErr } = await supabaseAdmin.from('shipment_boxes').insert(boxRows);
   if (boxErr) {

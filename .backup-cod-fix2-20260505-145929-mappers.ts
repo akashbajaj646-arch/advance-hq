@@ -194,18 +194,7 @@ export function boxToUpsPackage(
     };
   }
 
-  // Signature confirmation (DeliveryConfirmation accessory).
-  //
-  // IMPORTANT: When COD is on this package, we do NOT add a separate
-  // DeliveryConfirmation. UPS rejects COD + DeliveryConfirmation as
-  // "121262: Accessory may not be combined with the accessory" because COD
-  // inherently requires a signature — the driver collects payment AND gets
-  // a signature in the same transaction. Adding a second signature accessory
-  // is treated as a duplicate.
-  //
-  // So: signature is already implicit when COD is on. We only set the
-  // DeliveryConfirmation accessory when COD is OFF.
-  if (options?.signatureRequired && !(options.codAmount && options.codAmount > 0)) {
+  if (options?.signatureRequired) {
     // DCISType: 1 = no signature required (default; same as not setting), 2 = signature
     // required (any age), 3 = adult signature required (21+). We use 2.
     pso.DeliveryConfirmation = { DCISType: '2' };
