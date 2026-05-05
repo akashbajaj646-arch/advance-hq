@@ -94,7 +94,7 @@ export default function OrdersPage() {
     let query = db.from('orders').select('*', { count: 'exact' });
     if (search) query = query.or(`order_number.ilike.%${search}%,customer_name.ilike.%${search}%,po_number.ilike.%${search}%,apparel_magic_customer_id.ilike.%${search}%`);
     if (statusFilter) query = query.eq('order_status', statusFilter);
-    const { data, count } = await query.order('order_date', { ascending: false }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+    const { data, count } = await query.order('created_at', { ascending: false }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
     if (data) { setOrders(data); setTotalCount(count || 0); }
     setLoading(false);
   }

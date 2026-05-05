@@ -130,7 +130,7 @@ export default function CustomersPage() {
     if (search) query = query.or(`customer_name.ilike.%${search}%,email.ilike.%${search}%,account_number.ilike.%${search}%,phone.ilike.%${search}%,city.ilike.%${search}%`);
     if (categoryFilter) query = query.eq('category', categoryFilter);
     if (stateFilter) query = query.eq('state', stateFilter);
-    const { data, count } = await query.order('customer_name', { ascending: true }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+    const { data, count } = await query.order('created_at', { ascending: false }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
     if (data) { setCustomers(data); setTotalCount(count || 0); }
     setLoading(false);
   }

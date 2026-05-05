@@ -91,7 +91,7 @@ export default function InvoicesPage() {
     let query = db.from('invoices').select('*', { count: 'exact' });
     if (search) query = query.or(`invoice_number.ilike.%${search}%,customer_name.ilike.%${search}%,apparel_magic_order_id.ilike.%${search}%,po_number.ilike.%${search}%`);
     if (paymentFilter) query = query.eq('payment_status', paymentFilter);
-    const { data, count } = await query.order('invoice_date', { ascending: false }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+    const { data, count } = await query.order('created_at', { ascending: false }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
     if (data) { setInvoices(data); setTotalCount(count || 0); }
     setLoading(false);
   }

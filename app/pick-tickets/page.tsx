@@ -83,7 +83,7 @@ export default function PickTicketsPage() {
     let query = db.from('pick_tickets').select('*', { count: 'exact' });
     if (search) query = query.or(`pick_ticket_id.ilike.%${search}%,customer_name.ilike.%${search}%,apparel_magic_order_id.ilike.%${search}%,invoice_id.ilike.%${search}%`);
     if (wmsFilter) query = query.eq('wms_status', wmsFilter);
-    const { data, count } = await query.order('pick_ticket_date', { ascending: false }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+    const { data, count } = await query.order('created_at', { ascending: false }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
     if (data) { setPTs(data); setTotalCount(count || 0); }
     setLoading(false);
   }
@@ -126,7 +126,7 @@ export default function PickTicketsPage() {
       <div className="card">
         {loading ? <div className="text-center py-8 text-gray-500">Loading...</div> : pts.length === 0 ? <div className="text-center py-8 text-gray-500">No pick tickets found</div> : (
           <>
-            <div className="overflow-x-auto"><table className="w-full"><thead><tr className="border-b border-gray-200">{visibleColumns.map(col => <th key={col} className="table-header pb-3 whitespace-nowrap">{getColumnLabel(col)}</th>)}</tr></thead><tbody>
+            <div className="overflow-x-auto"><table className="w-full"><thead><tr className="border-b border-gray-200">{visibleColumns.map(col => <th key={col} className="table-header pb-3 whitespace-nowrap">{getColumnLabel(col)}</th>)}<th className="table-header pb-3 whitespace-nowrap"></th></tr></thead><tbody>
               {pts.map(pt => (<tr key={pt.id} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors" onClick={() => router.push(`/pick-tickets/${pt.pick_ticket_id}`)}>{visibleColumns.map(col => (<td key={col} className="table-cell text-sm max-w-[200px] truncate">
                 {col === 'pick_ticket_id' ? <span className="font-medium text-brand-600">PT-{pt[col]}</span>
                   : col === 'customer_name' ? <button onClick={(e) => { e.stopPropagation(); router.push(`/customers/${pt.apparel_magic_customer_id}`); }} className="text-brand-600 hover:underline">{pt[col]}</button>
@@ -134,7 +134,7 @@ export default function PickTicketsPage() {
                   : col === 'invoice_id' && pt[col] ? <button onClick={(e) => { e.stopPropagation(); router.push(`/invoices/${pt[col]}`); }} className="text-brand-600 hover:underline">{pt[col]}</button>
                   : col === 'wms_status' ? <span className={`px-2 py-0.5 rounded text-xs font-medium ${pt[col] === 'shipped' || pt[col] === 'completed' ? 'bg-green-100 text-green-700' : pt[col] === 'picked' ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700'}`}>{pt[col] || 'pending'}</span>
                   : fmt(col, pt[col])}
-              </td>))}</tr>))}
+              </td>))}<td className="table-cell text-sm" onClick={(e) => e.stopPropagation()}><button onClick={() => router.push(`/shipping/ship/${pt.pick_ticket_id}`)} className="px-2.5 py-1 text-xs bg-brand-600 text-white rounded hover:bg-brand-700 whitespace-nowrap">Ship</button></td></tr>))}
             </tbody></table></div>
             <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200"><p className="text-sm text-gray-500">Showing {page * PAGE_SIZE + 1}-{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount.toLocaleString()}</p><div className="flex gap-2"><button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">Previous</button><span className="px-3 py-1 text-sm text-gray-500">Page {page + 1} of {totalPages}</span><button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">Next</button></div></div>
           </>

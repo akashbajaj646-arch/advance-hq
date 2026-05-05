@@ -50,7 +50,7 @@ export default function PaymentsPage() {
     let query = db.from('payments').select('*', { count: 'exact' });
     if (search) query = query.or(`am_payment_id.ilike.%${search}%,am_customer_id.ilike.%${search}%,reference.ilike.%${search}%,payment_type.ilike.%${search}%`);
     if (typeFilter) query = query.eq('payment_type', typeFilter);
-    const { data, count } = await query.order('payment_date', { ascending: false }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+    const { data, count } = await query.order('created_at', { ascending: false }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
     setPayments(data || []);
     setTotalCount(count || 0);
     setLoading(false);

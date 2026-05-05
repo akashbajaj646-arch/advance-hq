@@ -264,7 +264,7 @@ export default function ProductsPage() {
     }
 
     const { data, count } = await query
-      .order('style_number', { ascending: true })
+      .order('created_at', { ascending: false })
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
     if (data) {
