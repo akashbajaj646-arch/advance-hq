@@ -46,9 +46,9 @@ const BASE_URL =
 const PAGE_SIZE = 200;
 // Hard cap to avoid runaway loops. 5 pages × 200 = 1000 PTs — way more than
 // will accumulate in 5 minutes during normal operation.
-const MAX_PAGES = 5;
+const MAX_PAGES = 3;
 // Time budget — bail if we exceed this even mid-page.
-const MAX_DURATION_MS = 45_000;
+const MAX_DURATION_MS = 50_000;
 
 function getAuthParams() {
   const time = Math.floor(Date.now() / 1000).toString();
@@ -210,6 +210,7 @@ export async function POST(_request: Request) {
     let pagesFetched = 0;
     let cursor: number | null = startCursor;
     let bailReason = '';
+    let firstError: string | null = null;
 
     while (pagesFetched < MAX_PAGES) {
       if (Date.now() - startTime > MAX_DURATION_MS) {
@@ -255,13 +256,25 @@ export async function POST(_request: Request) {
 
           const row = buildPtRow(pt, customerMap, orderMap);
           if (ptExistsInDb) {
-            await supabase
+            const { error: updErr } = await supabase
               .from('pick_tickets')
               .update(row)
               .eq('pick_ticket_id', pt.pick_ticket_id);
+            if (updErr) {
+              console.error('[recent-sync] update failed for PT', pt.pick_ticket_id, updErr);
+              errors++;
+              if (firstError === null) firstError = 'update PT ' + pt.pick_ticket_id + ': ' + updErr.message;
+              continue;
+            }
             updated++;
           } else {
-            await supabase.from('pick_tickets').insert(row);
+            const { error: insErr } = await supabase.from('pick_tickets').insert(row);
+            if (insErr) {
+              console.error('[recent-sync] insert failed for PT', pt.pick_ticket_id, insErr);
+              errors++;
+              if (firstError === null) firstError = 'insert PT ' + pt.pick_ticket_id + ': ' + insErr.message;
+              continue;
+            }
             created++;
           }
 
@@ -335,6 +348,7 @@ export async function POST(_request: Request) {
         start_cursor: startCursor,
         end_cursor: cursor,
         bail_reason: bailReason,
+        first_error: firstError,
       },
     });
   } catch (error) {
