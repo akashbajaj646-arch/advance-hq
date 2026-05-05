@@ -73,12 +73,15 @@ function parseDate(dateStr: string | null): string | null {
  * Fetch the count of PTs in AM. Returns null if the response shape doesn't
  * include a total — we'll fall back to a smaller approach in that case.
  */
-async function fetchPickTicketCount(): Promise<number | null> {
+async function fetchLastPageNumber(): Promise<number> {
+  // We probe with the smallest valid page_size (10, AM minimum) to get
+  // pagination metadata without pulling extra data. AM returns total_pages
+  // directly, so no division needed.
   const auth = getAuthParams();
   const params = new URLSearchParams({
     time: auth.time,
     token: auth.token,
-    'pagination[page_size]': '1',
+    'pagination[page_size]': String(PAGE_SIZE),
     'pagination[page]': '1',
   });
   const url = `${BASE_URL}/pick_tickets?${params.toString()}`;
@@ -86,12 +89,24 @@ async function fetchPickTicketCount(): Promise<number | null> {
     method: 'GET',
     headers: { 'User-Agent': 'AdvanceHQ/1.0' },
   });
-  if (!res.ok) throw new Error(`AM count check HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`AM probe HTTP ${res.status}`);
   const data = await res.json();
-  const total = data?.meta?.pagination?.total;
-  if (typeof total === 'number') return total;
-  if (typeof total === 'string') return parseInt(total, 10) || null;
-  return null;
+  const totalPages = data?.meta?.pagination?.total_pages;
+  if (typeof totalPages === 'number' && totalPages > 0) return totalPages;
+  if (typeof totalPages === 'string') {
+    const n = parseInt(totalPages, 10);
+    if (n > 0) return n;
+  }
+  // Fallback: try total_records / PAGE_SIZE
+  const totalRecords = data?.meta?.pagination?.total_records;
+  if (typeof totalRecords === 'number' && totalRecords > 0) {
+    return Math.max(1, Math.ceil(totalRecords / PAGE_SIZE));
+  }
+  if (typeof totalRecords === 'string') {
+    const n = parseInt(totalRecords, 10);
+    if (n > 0) return Math.max(1, Math.ceil(n / PAGE_SIZE));
+  }
+  throw new Error('AM did not return total_pages or total_records');
 }
 
 /**
@@ -211,11 +226,7 @@ export async function POST(_request: Request) {
 
   try {
     // Step 1: figure out the last page (newest records)
-    const total = await fetchPickTicketCount();
-    if (total === null) {
-      throw new Error('AM did not return a total count for pagination');
-    }
-    const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const lastPage = await fetchLastPageNumber();
 
     // Step 2: pull the maps for FK lookups (small tables, fast)
     const [{ data: customers }, { data: orders }] = await Promise.all([
