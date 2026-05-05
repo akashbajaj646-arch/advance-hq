@@ -34,7 +34,12 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+// CRITICAL: use service role key, not anon key. Anon key is silently blocked
+// by RLS policies on sync_log and pick_tickets, causing writes to vanish.
+const supabaseKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const APPARELMAGIC_API_TOKEN = process.env.APPARELMAGIC_TOKEN || '';
@@ -283,9 +288,19 @@ export async function POST(_request: Request) {
           const ptId = String(pt.pick_ticket_id);
           const existingMod = existingMap[ptId];
           const incomingMod = pt.last_modified_time || null;
+          const ptExistsInDb = ptId in existingMap;
 
-          if (existingMod !== undefined && existingMod === incomingMod) {
-            // Already have it AND nothing changed — skip without writing
+          // Compare as Date objects: AM returns ISO format ('2023-08-25T20:47:45Z')
+          // but Postgres normalizes to '2023-08-25 20:47:45+00' on read. String
+          // equality would always fail; Date.parse normalizes both representations.
+          const sameMod =
+            ptExistsInDb &&
+            ((existingMod === null && incomingMod === null) ||
+              (existingMod !== null &&
+                incomingMod !== null &&
+                Date.parse(existingMod) === Date.parse(incomingMod)));
+
+          if (sameMod) {
             skipped++;
             consecutiveUnchanged++;
             if (consecutiveUnchanged >= STOP_THRESHOLD) {
@@ -298,7 +313,7 @@ export async function POST(_request: Request) {
 
           const row = buildPtRow(pt, customerMap, orderMap);
 
-          if (existingMod !== undefined) {
+          if (ptExistsInDb) {
             await supabase
               .from('pick_tickets')
               .update(row)
