@@ -156,7 +156,6 @@ function buildPtRow(pt: any, customerMap: Record<string, string>, orderMap: Reco
     wms_status: pt.wms_status || 'pending',
     qty_cartoned: toNum(pt.qty_cartoned) || 0,
     carton_status: pt.carton_status || 'none',
-    num_cartons: pt.num_cartons || null,
     am_creation_time: pt.creation_time || null,
     am_last_modified_time: pt.last_modified_time || null,
     last_synced_at: new Date().toISOString(),
