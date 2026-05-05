@@ -1,11 +1,8 @@
 {
   "crons": [
-    { "path": "/api/cron/sync-customers",    "schedule": "0 2 * * *" },
-    { "path": "/api/cron/sync-products",     "schedule": "5 2 * * *" },
-    { "path": "/api/cron/sync-inventory",    "schedule": "10 2 * * *" },
-    { "path": "/api/cron/sync-orders",       "schedule": "15 2 * * *" },
-    { "path": "/api/cron/sync-invoices",     "schedule": "20 2 * * *" },
-    { "path": "/api/cron/sync-shipments",    "schedule": "25 2 * * *" },
-    { "path": "/api/cron/sync-pick-tickets", "schedule": "30 2 * * *" }
+    {
+      "path": "/api/cron/sync-pick-tickets-recent",
+      "schedule": "*/5 * * * *"
+    }
   ]
 }
