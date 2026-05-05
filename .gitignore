@@ -3,3 +3,6 @@ node_modules/
 .env.local
 .vercel
 .env*.local
+
+# Install-script safety backups (never commit)
+.backup-*
