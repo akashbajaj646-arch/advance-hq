@@ -102,21 +102,27 @@ class QueryBuilder {
 
   private async _execute(): Promise<QueryResult | SingleResult> {
     try {
+      // The /api/data route reads query parameters from body.query.*, NOT
+      // from the top level. Earlier versions of this file sent them at the
+      // top level which silently dropped filters / order / range / count
+      // because the route would see `body.query` as undefined. The bug was
+      // invisible until tables grew past PostgREST's default 1000-row cap.
       const res = await fetch('/api/data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'query',
           table: this._table,
-          select: this._select,
-          filters: this._filters.length > 0 ? this._filters : undefined,
-          order: this._order.length > 0 ? this._order : undefined,
-          limit: this._limit,
-          rangeFrom: this._rangeFrom,
-          rangeTo: this._rangeTo,
-          count: this._count,
-          head: this._head,
-          single: this._single,
+          query: {
+            select: this._select,
+            filters: this._filters.length > 0 ? this._filters : undefined,
+            order: this._order.length > 0 ? this._order : undefined,
+            limit: this._limit,
+            rangeFrom: this._rangeFrom,
+            rangeTo: this._rangeTo,
+            count: this._count,
+            head: this._head,
+            single: this._single,
+          },
         }),
       });
 
@@ -203,12 +209,12 @@ class MutationFilterBuilder {
   }
 }
 
-// RPC helper
+// RPC helper — the API route accepts both `kind: 'rpc'` and the legacy shape.
 async function rpc(fn: string, params?: Record<string, any>) {
   const res = await fetch('/api/data', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'rpc', fn, params }),
+    body: JSON.stringify({ kind: 'rpc', fn, args: params }),
   });
   if (res.status === 401) { window.location.href = '/login'; return { data: null, error: 'Unauthorized' }; }
   const json = await res.json();
