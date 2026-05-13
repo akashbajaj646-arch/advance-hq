@@ -206,6 +206,16 @@ export default function ShipPickTicketPage() {
   const [decidedAddress, setDecidedAddress] = useState<AddressShape | null>(null);
   const [validationStatus, setValidationStatus] = useState<ValidationStatus>('pending');
 
+  // Editable ship-to. Seeded from the PT defaults via originalShipTo. The
+  // shipping module is decoupled from PT/order/invoice — manual edits only
+  // affect the shipment row that gets persisted via labels/create. The
+  // upstream PT in ApparelMagic is never touched.
+  const [shipTo, setShipTo] = useState<AddressShape | null>(null);
+  const [addressManuallyEdited, setAddressManuallyEdited] = useState(false);
+  const [editingAddress, setEditingAddress] = useState(false);
+  const [editForm, setEditForm] = useState<AddressShape | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+
   // Advanced options state
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [signatureRequired, setSignatureRequired] = useState(false);
@@ -287,56 +297,92 @@ export default function ShipPickTicketPage() {
   useEffect(() => {
     if (!detail || !draftKey || draftRestoredRef.current) return;
     draftRestoredRef.current = true;
+    let restoredShipTo = false;
     try {
       const raw = localStorage.getItem(draftKey);
-      if (!raw) return;
-      const draft = JSON.parse(raw);
-      const savedAt = typeof draft.savedAt === 'number' ? draft.savedAt : 0;
-      if (Date.now() - savedAt > DRAFT_TTL_MS) {
-        localStorage.removeItem(draftKey);
-        return;
+      if (raw) {
+        const draft = JSON.parse(raw);
+        const savedAt = typeof draft.savedAt === 'number' ? draft.savedAt : 0;
+        if (Date.now() - savedAt > DRAFT_TTL_MS) {
+          localStorage.removeItem(draftKey);
+        } else {
+          // Apply each piece. Use defensive checks because the localStorage
+          // schema can drift if we ship a new version that adds fields.
+          if (typeof draft.shipVia === 'string') setShipVia(draft.shipVia);
+          if (Array.isArray(draft.boxes) && draft.boxes.length > 0) {
+            setBoxes(draft.boxes);
+          }
+          if (typeof draft.signatureRequired === 'boolean') {
+            setSignatureRequired(draft.signatureRequired);
+          }
+          if (typeof draft.saturdayDelivery === 'boolean') {
+            setSaturdayDelivery(draft.saturdayDelivery);
+          }
+          if (typeof draft.codEnabled === 'boolean') {
+            setCodEnabled(draft.codEnabled);
+          }
+          if (draft.codMode === 'per_box' || draft.codMode === 'per_shipment') {
+            setCodMode(draft.codMode);
+          }
+          if (Array.isArray(draft.codAmounts)) {
+            setCodAmounts(draft.codAmounts);
+          }
+          if (typeof draft.codTotalAmount === 'number') {
+            setCodTotalAmount(draft.codTotalAmount);
+          }
+          if (
+            draft.codPaymentType === '' ||
+            draft.codPaymentType === 'cashiers_check' ||
+            draft.codPaymentType === 'any_check' ||
+            draft.codPaymentType === 'cash'
+          ) {
+            setCodPaymentType(draft.codPaymentType);
+          }
+          if (typeof draft.advancedOpen === 'boolean') {
+            setAdvancedOpen(draft.advancedOpen);
+          }
+          if (
+            draft.shipTo &&
+            typeof draft.shipTo === 'object' &&
+            typeof draft.shipTo.street1 === 'string'
+          ) {
+            setShipTo(draft.shipTo as AddressShape);
+            restoredShipTo = true;
+          }
+          if (typeof draft.addressManuallyEdited === 'boolean') {
+            setAddressManuallyEdited(draft.addressManuallyEdited);
+          }
+          setDraftRestored(true);
+        }
       }
-      // Apply each piece. Use defensive checks because the localStorage
-      // schema can drift if we ship a new version that adds fields.
-      if (typeof draft.shipVia === 'string') setShipVia(draft.shipVia);
-      if (Array.isArray(draft.boxes) && draft.boxes.length > 0) {
-        setBoxes(draft.boxes);
-      }
-      if (typeof draft.signatureRequired === 'boolean') {
-        setSignatureRequired(draft.signatureRequired);
-      }
-      if (typeof draft.saturdayDelivery === 'boolean') {
-        setSaturdayDelivery(draft.saturdayDelivery);
-      }
-      if (typeof draft.codEnabled === 'boolean') {
-        setCodEnabled(draft.codEnabled);
-      }
-      if (draft.codMode === 'per_box' || draft.codMode === 'per_shipment') {
-        setCodMode(draft.codMode);
-      }
-      if (Array.isArray(draft.codAmounts)) {
-        setCodAmounts(draft.codAmounts);
-      }
-      if (typeof draft.codTotalAmount === 'number') {
-        setCodTotalAmount(draft.codTotalAmount);
-      }
-      if (
-        draft.codPaymentType === '' ||
-        draft.codPaymentType === 'cashiers_check' ||
-        draft.codPaymentType === 'any_check' ||
-        draft.codPaymentType === 'cash'
-      ) {
-        setCodPaymentType(draft.codPaymentType);
-      }
-      if (typeof draft.advancedOpen === 'boolean') {
-        setAdvancedOpen(draft.advancedOpen);
-      }
-      setDraftRestored(true);
     } catch (e) {
       console.warn('Failed to restore shipping draft:', e);
     }
+    // Seed shipTo from the PT defaults if the draft didn't already supply
+    // one. Without this, shipTo stays null and the validation card never
+    // renders.
+    if (!restoredShipTo && originalShipTo) {
+      setShipTo(originalShipTo);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, draftKey]);
+
+  // When the ship-to address changes (manual edit, draft restore, PT
+  // re-seed, residential override) clear any previously-decided address so
+  // the user can't accidentally print with stale validation context. The
+  // AddressValidationCard re-emits onAddressDecided as soon as the new
+  // validation completes.
+  useEffect(() => {
+    setDecidedAddress(null);
+    setValidationStatus('pending');
+  }, [
+    shipTo?.street1,
+    shipTo?.street2,
+    shipTo?.city,
+    shipTo?.state,
+    shipTo?.zip,
+    shipTo?.country,
+  ]);
 
   // Save draft on any relevant state change. We debounce by 300ms so that
   // typing into a box weight field doesn't fire a localStorage write per
@@ -358,6 +404,8 @@ export default function ShipPickTicketPage() {
           codTotalAmount,
           codPaymentType,
           advancedOpen,
+          shipTo,
+          addressManuallyEdited,
           savedAt: Date.now(),
         };
         localStorage.setItem(draftKey, JSON.stringify(draft));
@@ -381,6 +429,8 @@ export default function ShipPickTicketPage() {
     codTotalAmount,
     codPaymentType,
     advancedOpen,
+    shipTo,
+    addressManuallyEdited,
   ]);
 
   // Clear the draft once the label has been successfully created.
@@ -409,12 +459,80 @@ export default function ShipPickTicketPage() {
     setCodPaymentType('');
     setAdvancedOpen(false);
     setDraftRestored(false);
+    // Reset address to the PT defaults
+    if (originalShipTo) setShipTo(originalShipTo);
+    setAddressManuallyEdited(false);
+    setEditingAddress(false);
+    setEditForm(null);
+    setEditError(null);
     // Restore default ship_via from PT
     if (detail?.pick_ticket?.ship_via) {
       setShipVia(guessShipVia(detail.pick_ticket.ship_via));
     } else {
       setShipVia('UPS Ground');
     }
+  }
+
+  // ── Address edit helpers ──────────────────────────────────────────────
+  function openAddressEditor() {
+    setEditForm({
+      name: shipTo?.name || '',
+      company: shipTo?.company || '',
+      phone: shipTo?.phone || '',
+      email: shipTo?.email || '',
+      street1: shipTo?.street1 || '',
+      street2: shipTo?.street2 || '',
+      city: shipTo?.city || '',
+      state: shipTo?.state || '',
+      zip: shipTo?.zip || '',
+      country: shipTo?.country || 'US',
+    });
+    setEditError(null);
+    setEditingAddress(true);
+  }
+
+  function saveAddressEdit() {
+    if (!editForm) return;
+    if (
+      !editForm.street1.trim() ||
+      !editForm.city.trim() ||
+      !editForm.state.trim() ||
+      !editForm.zip.trim()
+    ) {
+      setEditError('Street, city, state, and zip are required.');
+      return;
+    }
+    const cleaned: AddressShape = {
+      name: editForm.name?.trim() || undefined,
+      company: editForm.company?.trim() || undefined,
+      phone: editForm.phone?.trim() || undefined,
+      email: editForm.email?.trim() || undefined,
+      street1: editForm.street1.trim(),
+      street2: editForm.street2?.trim() || undefined,
+      city: editForm.city.trim(),
+      state: editForm.state.trim().toUpperCase(),
+      zip: editForm.zip.trim(),
+      country: (editForm.country || 'US').trim().toUpperCase(),
+    };
+    setShipTo(cleaned);
+    setAddressManuallyEdited(true);
+    setEditingAddress(false);
+    setEditError(null);
+  }
+
+  function cancelAddressEdit() {
+    setEditingAddress(false);
+    setEditForm(null);
+    setEditError(null);
+  }
+
+  function revertAddressToPt() {
+    if (!originalShipTo) return;
+    setShipTo(originalShipTo);
+    setAddressManuallyEdited(false);
+    setEditingAddress(false);
+    setEditForm(null);
+    setEditError(null);
   }
 
   // Build the original ship-to address from the PT.
@@ -774,22 +892,157 @@ export default function ShipPickTicketPage() {
         <div className="lg:col-span-2 space-y-6">
           {/* Address */}
           <section>
-            <h2 className="text-sm font-semibold text-gray-900 mb-3 uppercase tracking-wide">
-              Ship to
-            </h2>
-            {originalShipTo ? (
-              <AddressValidationCard
-                originalAddress={originalShipTo}
-                carrier={carrier}
-                onAddressDecided={(addr, status) => {
-                  setDecidedAddress(addr);
-                  setValidationStatus(status);
-                }}
-                reloadKey={carrier}
-              />
+            <div className="flex items-baseline justify-between mb-3">
+              <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">
+                Ship to
+              </h2>
+              {!editingAddress && (
+                <button
+                  type="button"
+                  onClick={openAddressEditor}
+                  className="text-xs text-brand-600 hover:underline"
+                >
+                  {shipTo ? 'Edit address' : 'Add address'}
+                </button>
+              )}
+            </div>
+
+            {editingAddress && editForm ? (
+              <div className="card border-brand-200 bg-brand-50/30 space-y-3">
+                <p className="text-xs font-medium text-gray-700">
+                  Edit ship-to address for this shipment only. Saving will re-run
+                  UPS validation. The pick ticket, order, and invoice are not
+                  changed.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <AddressField
+                    label="Name"
+                    value={editForm.name || ''}
+                    onChange={(v) => setEditForm({ ...editForm, name: v })}
+                  />
+                  <AddressField
+                    label="Company"
+                    value={editForm.company || ''}
+                    onChange={(v) => setEditForm({ ...editForm, company: v })}
+                  />
+                  <AddressField
+                    label="Phone"
+                    value={editForm.phone || ''}
+                    onChange={(v) => setEditForm({ ...editForm, phone: v })}
+                  />
+                  <AddressField
+                    label="Email"
+                    value={editForm.email || ''}
+                    onChange={(v) => setEditForm({ ...editForm, email: v })}
+                  />
+                </div>
+                <AddressField
+                  label="Street"
+                  required
+                  value={editForm.street1}
+                  onChange={(v) => setEditForm({ ...editForm, street1: v })}
+                />
+                <AddressField
+                  label="Street line 2"
+                  value={editForm.street2 || ''}
+                  onChange={(v) => setEditForm({ ...editForm, street2: v })}
+                />
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_120px_140px] gap-2">
+                  <AddressField
+                    label="City"
+                    required
+                    value={editForm.city}
+                    onChange={(v) => setEditForm({ ...editForm, city: v })}
+                  />
+                  <AddressField
+                    label="State"
+                    required
+                    value={editForm.state}
+                    onChange={(v) =>
+                      setEditForm({ ...editForm, state: v.toUpperCase().slice(0, 2) })
+                    }
+                  />
+                  <AddressField
+                    label="Zip"
+                    required
+                    value={editForm.zip}
+                    onChange={(v) => setEditForm({ ...editForm, zip: v })}
+                  />
+                </div>
+                {editError && (
+                  <p className="text-xs text-red-700">{editError}</p>
+                )}
+                <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
+                  <button
+                    type="button"
+                    onClick={saveAddressEdit}
+                    className="px-3 py-1.5 text-xs font-medium bg-brand-600 text-white rounded hover:bg-brand-700"
+                  >
+                    Save &amp; re-validate
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelAddressEdit}
+                    className="px-3 py-1.5 text-xs border border-gray-300 rounded hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  {addressManuallyEdited && originalShipTo && (
+                    <button
+                      type="button"
+                      onClick={revertAddressToPt}
+                      className="ml-auto text-xs text-gray-500 hover:text-gray-700 hover:underline"
+                    >
+                      Revert to PT address
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : shipTo ? (
+              <>
+                {addressManuallyEdited && (
+                  <div className="flex items-center gap-2 mb-2 text-xs text-amber-800 bg-amber-50/60 border border-amber-200 rounded px-2 py-1.5">
+                    <svg
+                      className="w-3.5 h-3.5 flex-shrink-0"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+                      />
+                    </svg>
+                    <span>
+                      Manually edited — this shipment will use the address below.
+                      The PT, order, and invoice are unchanged.
+                    </span>
+                    {originalShipTo && (
+                      <button
+                        type="button"
+                        onClick={revertAddressToPt}
+                        className="ml-auto underline hover:text-amber-900 whitespace-nowrap"
+                      >
+                        Revert
+                      </button>
+                    )}
+                  </div>
+                )}
+                <AddressValidationCard
+                  originalAddress={shipTo}
+                  carrier={carrier}
+                  onAddressDecided={(addr, status) => {
+                    setDecidedAddress(addr);
+                    setValidationStatus(status);
+                  }}
+                  reloadKey={`${carrier}|${shipTo.street1}|${shipTo.zip}`}
+                />
+              </>
             ) : (
               <div className="card text-sm text-red-700 bg-red-50/40 border-red-200">
-                This PT is missing a ship-to address. Fix it in ApparelMagic and re-sync.
+                This PT is missing a ship-to address. Click <span className="font-semibold">Add address</span> above to enter one for this shipment.
               </div>
             )}
           </section>
@@ -1297,5 +1550,32 @@ function KV({ label, value }: { label: string; value: any }) {
       <div className="text-xs text-gray-400 uppercase tracking-wide">{label}</div>
       <div className="text-sm font-medium text-gray-900 mt-0.5">{value}</div>
     </div>
+  );
+}
+
+function AddressField({
+  label,
+  value,
+  onChange,
+  required,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  required?: boolean;
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs text-gray-600 block mb-1">
+        {label}
+        {required && <span className="text-red-500 ml-0.5">*</span>}
+      </span>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full px-2.5 py-1.5 border border-gray-300 rounded outline-none bg-white text-sm focus:ring-2 focus:ring-brand-500"
+      />
+    </label>
   );
 }
