@@ -4,7 +4,7 @@
  * track() lands in Week 7 with the webhook ingestion path.
  *
  * UPS API surface used:
- *   - POST /api/addressvalidation/v2/1     (already implemented in Week 1)
+ *   - POST /api/addressvalidation/v2/3     (already implemented in Week 1)
  *   - POST /api/rating/v2403/Rate
  *   - POST /api/shipments/v2403/ship
  *   - DELETE /api/shipments/v1/void/cancel/{shipmentidentificationnumber}
@@ -145,7 +145,7 @@ export class UpsClient implements CarrierClient {
 
   async validateAddress(address: Address): Promise<AddressValidationResult> {
     const path =
-      `/api/addressvalidation/v2/1` +
+      `/api/addressvalidation/v2/3` +
       `?regionalrequestindicator=1&maximumcandidatelistsize=1`;
 
     const body = {

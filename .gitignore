@@ -6,3 +6,7 @@ node_modules/
 
 # Install-script safety backups (never commit)
 .backup-*
+
+# local backups
+*.bak
+.sync-backups/

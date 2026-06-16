@@ -8,12 +8,21 @@
  *
  * Each row has weight + dims. Tare weight from the preset is added to
  * actual product weight to get total package weight.
+ *
+ * UNITS:
+ *   The BoxRow type stores weight in OUNCES (`weightOz`) — this matches
+ *   the package_presets table, the EasyPost USPS mapper (which sends raw
+ *   oz to USPS), and the rest of the carrier pipeline. The UI displays
+ *   and accepts weight in POUNDS — we convert at the input boundary so
+ *   the shipper enters intuitive numbers without changing the internal
+ *   data model.
  */
 
 import { useEffect, useState } from 'react';
 
 export interface BoxRow {
-  /** Total package weight in oz, including tare. */
+  /** Total package weight in OUNCES, including tare. UI shows lbs but
+   *  this field is the canonical storage unit consumed by mappers. */
   weightOz: number;
   length: number;
   width: number;
@@ -45,6 +54,19 @@ interface Props {
    * empty boxes on first render.
    */
   ptNumCartons?: number;
+}
+
+// ─── Unit conversion helpers ────────────────────────────────────────
+// All storage is in ounces. UI shows lbs. These two helpers convert at
+// the boundary. We keep oz as integers (the canonical unit) and lbs at
+// 0.1 precision (UPS's minimum granularity).
+function ozToDisplayLbs(oz: number): number {
+  if (!oz || oz <= 0) return 0;
+  return Math.round((oz / 16) * 10) / 10;
+}
+function displayLbsToOz(lbs: number): number {
+  if (!lbs || lbs <= 0) return 0;
+  return Math.max(1, Math.round(lbs * 16));
 }
 
 export default function BoxBuilder({
@@ -98,7 +120,7 @@ export default function BoxBuilder({
   ): BoxRow {
     if (!preset) {
       return {
-        weightOz: 32,
+        weightOz: 32, // = 2 lbs default
         length: 16,
         width: 14,
         height: 10,
@@ -207,9 +229,9 @@ export default function BoxBuilder({
           {/* Numeric inputs */}
           <div className="grid grid-cols-4 gap-3">
             <NumField
-              label="Weight (oz)"
-              value={box.weightOz}
-              onChange={(v) => updateField(i, 'weightOz', v)}
+              label="Weight (lbs)"
+              value={ozToDisplayLbs(box.weightOz)}
+              onChange={(v) => updateField(i, 'weightOz', displayLbsToOz(v))}
             />
             <NumField
               label="Length (in)"
