@@ -22,6 +22,7 @@ const ALLOWED_TABLES = new Set([
   'divisions', 'vendors', 'size_ranges',
   'portals', 'portal_items', 'portal_attachments',
   'change_requests', 'credit_memos', 'payments',
+  'purchase_orders', 'purchase_order_items',
   // Shipping module additions
   'warehouses', 'package_presets', 'address_validations',
   'notification_templates', 'notification_queue', 'tracking_events',

@@ -1,24 +1,10 @@
 {
   "crons": [
-    {
-      "path": "/api/cron/sync-pick-tickets-recent",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/sync-orders-recent",
-      "schedule": "1-59/5 * * * *"
-    },
-    {
-      "path": "/api/cron/sync-invoices-recent",
-      "schedule": "2-59/5 * * * *"
-    },
-    {
-      "path": "/api/cron/sync-products-recent",
-      "schedule": "4-59/5 * * * *"
-    },
-    {
-      "path": "/api/cron/sync-customers-recent",
-      "schedule": "0-59/5 * * * *"
-    }
+    { "path": "/api/cron/sync-pick-tickets-recent",    "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/sync-orders-recent",          "schedule": "1-59/5 * * * *" },
+    { "path": "/api/cron/sync-invoices-recent",        "schedule": "2-59/5 * * * *" },
+    { "path": "/api/cron/sync-purchase-orders-recent", "schedule": "3-59/5 * * * *" },
+    { "path": "/api/cron/sync-products-recent",        "schedule": "4-59/5 * * * *" },
+    { "path": "/api/cron/sync-customers-recent",       "schedule": "0-59/5 * * * *" }
   ]
 }
