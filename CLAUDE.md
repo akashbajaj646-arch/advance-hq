@@ -82,7 +82,7 @@ Don't try to make a sync route do a full backfill; either page it across many cr
 Auth params to ApparelMagic are always `{ time: unix_seconds_now, token: APPARELMAGIC_TOKEN }`. Pagination uses `pagination[last_id]` keyset, not page numbers.
 
 ### Schema drift in sync mappers — silent failure mode
-The `/api/admin/sync-*` routes wrap each row's upsert in a per-row `try/catch`, so when a mapper writes a column that doesn't exist on the target table, **every row fails and the error is swallowed**. The route returns 200, the UI says it synced, and the only evidence is in Vercel logs. Known current offender: `/api/admin/sync-shipments` writes `ship_via` to a `shipments` table that doesn't have that column.
+The `/api/admin/sync-*` routes wrap each row's upsert in a per-row `try/catch`, so when a mapper writes a column that doesn't exist on the target table, **every row fails and the error is swallowed**. The route returns 200, the UI says it synced, and the only evidence is in Vercel logs. Known offender: `/api/admin/sync-shipments` (the full sync) writes `ship_via` to a `shipments` table that has no such column. The frequent variant `/api/admin/sync-shipments-recent` has had `ship_via` removed and now surfaces the first per-row error into `sync_log.error_details` instead of swallowing it — see the recent-sync section below.
 
 When touching any sync mapper, verify the columns actually exist first:
 
@@ -91,6 +91,76 @@ SELECT column_name FROM information_schema.columns WHERE table_name = '<table>';
 ```
 
 For debugging a sync that "runs successfully but data doesn't update," run the matching `scripts/deep-sync-*.js` instead — those batch upserts per page, so a missing column surfaces as a loud per-page error rather than being hidden one row at a time. The deep-sync scripts are the source of truth when the API route is lying to you.
+
+### Frequent "recent" sync (`/api/admin/sync-*-recent`)
+
+In addition to the full `sync-*` routes, there are lightweight `sync-*-recent` variants for
+`pick-tickets`, `orders`, `invoices`, `customers`, `products`, and `shipments`. These are the ones wired to
+run every ~5 minutes and finish in seconds; the full `sync-*` routes are the heavier backstop. The original
+`sync-pick-tickets-recent` is the reference implementation — the others were modeled on it. The shared shape:
+
+1. **High-water mark.** Find the highest AM id already in the table, seed AM's `pagination[last_id]` cursor
+   one below it, and walk forward. Because AM ignores page-number pagination and `desc` ordering, walking
+   forward from the high-water mark is the only way to fetch just-new records cheaply.
+2. **Update-or-insert per row**, then refresh that row's children (order_items, invoice_items, etc.).
+3. **Bail** on empty page, no cursor progress, `MAX_PAGES`, or the time budget — whichever hits first.
+4. Stats (`scanned/created/updated/skipped/errors`, `bail_reason`, `start_cursor`, `end_cursor`,
+   `first_error`) are returned in the response **and** persisted to `sync_log` (`first_error` lands in
+   `error_details`), so you can diagnose from SQL without curling.
+
+Steady state is `bail_reason: 'no-cursor-progress'` (or `'empty-page'`) with sub-second durations. A
+`bail_reason: 'time-budget'` for a run or two is normal while a table is still catching up on a backlog.
+
+**AM id columns are stored as TEXT — do not seed the cursor with `.order(col, desc).limit(1)`.** Postgres
+sorts text lexicographically, so `"9999"` outranks `"10416"`; that seeds the cursor too low and makes the
+sync re-scan hundreds of already-synced rows every tick (the original symptom: orders taking 57s and
+re-`updated`-ing 400 rows each run). Worse, `DESC` puts NULLs first, so on a table with null ids (shipments,
+see below) the query returns null and the route reads it as "empty table." The fix is the
+`max_numeric_id(tbl, col)` Postgres function (in `supabase/migrations/` and run in the SQL editor) which
+returns the true numeric max ignoring nulls. Each recent route calls it via
+`supabase.rpc('max_numeric_id', { tbl, col })` with a `.order(...)` fallback if the function isn't installed.
+
+```sql
+-- one-time; safe to re-run
+CREATE OR REPLACE FUNCTION max_numeric_id(tbl text, col text) RETURNS bigint
+LANGUAGE plpgsql AS $$
+DECLARE result bigint;
+BEGIN
+  EXECUTE format('SELECT COALESCE(MAX(NULLIF(regexp_replace(%I, ''\D'', , g), )::bigint), 0) FROM %I', col, tbl)
+  INTO result; RETURN result;
+END $$;
+```
+
+**The time-budget check must run inside the per-record loop, not just between pages.** `MAX_DURATION_MS` is
+45s (margin under Vercel's 60s cap). Shipments does many child inserts (boxes/box_items/pallets) per row, so
+a single page of 200 can blow 60s before the next page-level check — that caused a hard
+`FUNCTION_INVOCATION_TIMEOUT` that never wrote to `sync_log`. Every recent route now checks the budget before
+each record and breaks out of both loops cleanly.
+
+**Duplicate-key (`23505`) is handled as an update, not an error.** The manual "Sync Now" button and the cron
+can run the same window concurrently; both seed the same cursor, both insert, one loses the race. The routes
+catch `23505` and fall back to an update (counted as `updated`), so a race doesn't show up as `errors`.
+
+**Coverage limit:** high-water-mark-forward catches all *new* records and edits to the *newest* ones. Edits
+to *older* records are not caught by the recent sync — the full `sync-*` route / `deep-sync-*.js` script is
+the backstop for those. Acceptable because the things that change after creation (an open order getting
+shipped) happen near the high-water mark anyway.
+
+### Shipments has two id systems and no link between them
+The `shipments` table mixes ApparelMagic shipments (keyed `am_shipment_id`, ~4.5k rows) with historical
+**ShipStation** imports (keyed `shipstation_id`, no `am_shipment_id`, ~13.5k rows — and confusingly tagged
+`source = 'apparel_magic'`). There is no shared key tying an AM shipment to its ShipStation counterpart.
+`sync-shipments-recent` keys on `am_shipment_id`, so when it pulls AM shipments it cannot recognize that a
+given shipment may already exist as a ShipStation row — it inserts a **second** row for the same physical
+shipment. **Decision (2026-06): duplicates are acceptable** since we're migrating off ShipStation onto
+HQ-native shipping and the ShipStation rows are a shrinking legacy. If that ever needs cleanup, dedupe on
+tracking number.
+
+**The shipments recent cron is currently PAUSED.** `vercel.json` schedules `pick-tickets`, `orders`,
+`invoices`, `customers`, and `products` recent syncs (staggered by minute); `sync-shipments-recent` is **not**
+scheduled. The route is installed and fixed (no `ship_via`, timeout-safe) — re-enabling is just adding its
+cron entry back to `vercel.json`. When you do, expect a multi-day drip as it backfills AM shipment history;
+for a fast backfill, use `scripts/deep-sync-shipments.js` (which still needs the `ship_via` removal applied).
 
 ## Required environment (`.env.local`)
 `.env.local.example` is **out of date** — it only lists Supabase and Anthropic. The full set actually used:
