@@ -95,7 +95,7 @@ For debugging a sync that "runs successfully but data doesn't update," run the m
 ### Frequent "recent" sync (`/api/admin/sync-*-recent`)
 
 In addition to the full `sync-*` routes, there are lightweight `sync-*-recent` variants for
-`pick-tickets`, `orders`, `invoices`, `customers`, `products`, and `shipments`. These are the ones wired to
+`pick-tickets`, `orders`, `invoices`, `customers`, `products`, `purchase-orders`, and `shipments`. These are the ones wired to
 run every ~5 minutes and finish in seconds; the full `sync-*` routes are the heavier backstop. The original
 `sync-pick-tickets-recent` is the reference implementation — the others were modeled on it. The shared shape:
 
@@ -161,6 +161,34 @@ tracking number.
 scheduled. The route is installed and fixed (no `ship_via`, timeout-safe) — re-enabling is just adding its
 cron entry back to `vercel.json`. When you do, expect a multi-day drip as it backfills AM shipment history;
 for a fast backfill, use `scripts/deep-sync-shipments.js` (which still needs the `ship_via` removal applied).
+
+### Purchase orders
+Synced from AM into `purchase_orders` (header) + `purchase_order_items`, keyed on
+`apparel_magic_id` (= AM `purchase_order_id`). Line items come **nested** in the AM
+`purchase_orders` response (`purchase_order_items` array) — no per-PO sub-call. POs carry
+`last_modified_time`, so the recent route does skip-if-unchanged.
+
+- **Recent route + cron:** `/api/admin/sync-purchase-orders-recent` and its cron, on the
+  exact pattern as the other recent routes (numeric high-water-mark via `max_numeric_id`,
+  dup-key handled as update, mid-loop time budget, `first_error` -> `sync_log`). Scheduled in
+  `vercel.json` at the minute-3 slot that shipments vacated.
+- **No full `/api/admin/sync-purchase-orders` route.** Initial/bulk backfill is the deep-sync
+  script `scripts/deep-sync-purchase-orders.js` (batched upserts per AM page, no Vercel
+  timeout). The first backfill loaded 332 POs / 8,857 items in a single AM page, so the whole
+  PO history is small — the recent cron is plenty for steady state.
+- **Migration:** `supabase/migrations/20260616_purchase_orders.sql` — RLS on, no policies
+  (service-role-only, like the rest). Header has a UNIQUE on `apparel_magic_id` (so the
+  dup-key fallback and deep-script `upsert(onConflict)` work); items FK to the header `id` with
+  `ON DELETE CASCADE` and also carry `apparel_magic_po_id` for the delete-by-parent refresh.
+- **Whitelist:** `purchase_orders` and `purchase_order_items` are in `ALLOWED_TABLES`
+  (`app/api/data/route.ts`) so the UI can read them.
+- **UI:** `app/purchase-orders/page.tsx` is a list + detail drawer modeled on the Orders page;
+  the nav entry lives in `app/layout.tsx` next to Payments. Deliberately *unlike* Orders: no
+  Invoices/Pick-Tickets/Shipments relation tabs (those are sales-side; POs are inbound), and
+  the vendor name is plain text because there's no vendor detail page to link to.
+- **Deferred:** the `receivers` array on each PO (receipts/receiving against the PO) is not
+  synced yet — that's where a future "Receipts" tab + a `purchase_order_receivers` table would
+  go. No vendor page. No full admin sync route.
 
 ## Required environment (`.env.local`)
 `.env.local.example` is **out of date** — it only lists Supabase and Anthropic. The full set actually used:
