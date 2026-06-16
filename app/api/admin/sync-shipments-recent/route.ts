@@ -37,7 +37,7 @@ const BASE_URL =
 
 const PAGE_SIZE = 200;
 const MAX_PAGES = 3;
-const MAX_DURATION_MS = 50_000;
+const MAX_DURATION_MS = 45_000;
 
 function getAuthParams() {
   return { time: Math.floor(Date.now() / 1000).toString(), token: APPARELMAGIC_API_TOKEN };
@@ -196,6 +196,7 @@ export async function POST(_request: Request) {
       });
 
       for (const ship of rows) {
+        if (Date.now() - startTime > MAX_DURATION_MS) { bailReason = 'time-budget'; break; }
         scanned++;
         try {
           const key = String(ship.id);
@@ -214,9 +215,17 @@ export async function POST(_request: Request) {
             if (error) { errors++; if (!firstError) firstError = 'update shipment ' + key + ': ' + error.message; continue; }
             updated++;
           } else {
-            const { error } = await supabase.from('shipments').insert(row);
-            if (error) { errors++; if (!firstError) firstError = 'insert shipment ' + key + ': ' + error.message; continue; }
-            created++;
+            const insRes = await supabase.from('shipments').insert(row);
+            if (insRes.error) {
+              if (insRes.error.code === '23505') {
+                await supabase.from('shipments').update(row).eq('am_shipment_id', ship.id);
+                updated++;
+              } else {
+                errors++; if (!firstError) firstError = 'insert shipment ' + key + ': ' + insRes.error.message; continue;
+              }
+            } else {
+              created++;
+            }
           }
 
           // Refresh boxes + box items
@@ -301,6 +310,7 @@ export async function POST(_request: Request) {
         }
       }
 
+      if (bailReason === 'time-budget') break;
       if (nextLastId === null || nextLastId === cursor) { bailReason = 'no-cursor-progress'; break; }
       cursor = nextLastId;
     }

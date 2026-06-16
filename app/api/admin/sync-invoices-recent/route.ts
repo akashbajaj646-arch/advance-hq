@@ -29,7 +29,7 @@ const BASE_URL =
 
 const PAGE_SIZE = 200;
 const MAX_PAGES = 3;
-const MAX_DURATION_MS = 50_000;
+const MAX_DURATION_MS = 45_000;
 
 function getAuthParams() {
   return { time: Math.floor(Date.now() / 1000).toString(), token: APPARELMAGIC_API_TOKEN };
@@ -246,6 +246,7 @@ export async function POST(_request: Request) {
       (existingRes.data || []).forEach((r: any) => { existingMap[String(r.apparel_magic_id)] = r.id; });
 
       for (const invoice of rows) {
+        if (Date.now() - startTime > MAX_DURATION_MS) { bailReason = 'time-budget'; break; }
         scanned++;
         try {
           const key = String(invoice.invoice_id);
@@ -257,10 +258,24 @@ export async function POST(_request: Request) {
             invoiceUuid = existingMap[key];
             updated++;
           } else {
-            const { data: ins, error } = await supabase.from('invoices').insert(row).select('id').single();
-            if (error || !ins) { errors++; if (!firstError) firstError = 'insert invoice ' + key + ': ' + (error ? error.message : 'no row'); continue; }
-            invoiceUuid = ins.id;
-            created++;
+            const ins = await supabase.from('invoices').insert(row).select('id').single();
+            if (ins.error) {
+              if (ins.error.code === '23505') {
+                // Raced a concurrent run; the row exists now -> update instead of erroring.
+                await supabase.from('invoices').update(row).eq('apparel_magic_id', invoice.invoice_id);
+                const back = await supabase.from('invoices').select('id').eq('apparel_magic_id', invoice.invoice_id).single();
+                if (!back.data) { errors++; if (!firstError) firstError = 'post-dup invoice ' + key; continue; }
+                invoiceUuid = back.data.id;
+                updated++;
+              } else {
+                errors++; if (!firstError) firstError = 'insert invoice ' + key + ': ' + ins.error.message; continue;
+              }
+            } else if (!ins.data) {
+              errors++; if (!firstError) firstError = 'insert invoice ' + key + ': no row'; continue;
+            } else {
+              invoiceUuid = ins.data.id;
+              created++;
+            }
           }
 
           if (Array.isArray(invoice.invoice_items) && invoice.invoice_items.length > 0) {
@@ -275,6 +290,7 @@ export async function POST(_request: Request) {
         }
       }
 
+      if (bailReason === 'time-budget') break;
       if (nextLastId === null || nextLastId === cursor) { bailReason = 'no-cursor-progress'; break; }
       cursor = nextLastId;
     }

@@ -13,10 +13,6 @@
       "schedule": "2-59/5 * * * *"
     },
     {
-      "path": "/api/cron/sync-shipments-recent",
-      "schedule": "3-59/5 * * * *"
-    },
-    {
       "path": "/api/cron/sync-products-recent",
       "schedule": "4-59/5 * * * *"
     },

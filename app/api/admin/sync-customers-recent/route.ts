@@ -28,7 +28,7 @@ const BASE_URL =
 
 const PAGE_SIZE = 200;
 const MAX_PAGES = 3;
-const MAX_DURATION_MS = 50_000;
+const MAX_DURATION_MS = 45_000;
 
 function getAuthParams() {
   return { time: Math.floor(Date.now() / 1000).toString(), token: APPARELMAGIC_API_TOKEN };
@@ -155,6 +155,7 @@ export async function POST(_request: Request) {
       (existingRes.data || []).forEach((r: any) => { existingMap[String(r.am_customer_id)] = r.id; });
 
       for (const customer of rows) {
+        if (Date.now() - startTime > MAX_DURATION_MS) { bailReason = 'time-budget'; break; }
         scanned++;
         try {
           const key = String(customer.customer_id);
@@ -166,10 +167,24 @@ export async function POST(_request: Request) {
             customerUuid = existingMap[key];
             updated++;
           } else {
-            const { data: ins, error } = await supabase.from('customers').insert(row).select('id').single();
-            if (error || !ins) { errors++; if (!firstError) firstError = 'insert customer ' + key + ': ' + (error ? error.message : 'no row'); continue; }
-            customerUuid = ins.id;
-            created++;
+            const ins = await supabase.from('customers').insert(row).select('id').single();
+            if (ins.error) {
+              if (ins.error.code === '23505') {
+                // Raced a concurrent run; the row exists now -> update instead of erroring.
+                await supabase.from('customers').update(row).eq('am_customer_id', customer.customer_id);
+                const back = await supabase.from('customers').select('id').eq('am_customer_id', customer.customer_id).single();
+                if (!back.data) { errors++; if (!firstError) firstError = 'post-dup customer ' + key; continue; }
+                customerUuid = back.data.id;
+                updated++;
+              } else {
+                errors++; if (!firstError) firstError = 'insert customer ' + key + ': ' + ins.error.message; continue;
+              }
+            } else if (!ins.data) {
+              errors++; if (!firstError) firstError = 'insert customer ' + key + ': no row'; continue;
+            } else {
+              customerUuid = ins.data.id;
+              created++;
+            }
           }
 
           if (Array.isArray(customer.locations) && customer.locations.length > 0) {
@@ -207,6 +222,7 @@ export async function POST(_request: Request) {
         }
       }
 
+      if (bailReason === 'time-budget') break;
       if (nextLastId === null || nextLastId === cursor) { bailReason = 'no-cursor-progress'; break; }
       cursor = nextLastId;
     }
