@@ -231,6 +231,22 @@ function buildItemRow(item: any, orderUuid: string, amOrderId: string): Record<s
   };
 }
 
+async function getMaxNumericId(table: string, col: string): Promise<number> {
+  // Primary: true numeric max via RPC. AM id columns are stored as text, so a
+  // plain `.order(col, desc)` returns the LEXICOGRAPHIC max ("9999" > "10416"),
+  // which seeds the cursor too low and re-scans rows we already have.
+  const rpc = await supabase.rpc('max_numeric_id', { tbl: table, col });
+  if (!rpc.error && rpc.data !== null && rpc.data !== undefined) {
+    const n = parseInt(String(rpc.data), 10);
+    if (!isNaN(n)) return n;
+  }
+  // Fallback if the RPC isn't installed yet -- degrades to old behavior, no crash.
+  const res = await supabase.from(table).select(col).order(col, { ascending: false }).limit(1).maybeSingle();
+  const v = res.data ? (res.data as any)[col] : null;
+  const n = v != null ? parseInt(String(v), 10) : 0;
+  return isNaN(n) ? 0 : n;
+}
+
 export async function POST(_request: Request) {
   const startTime = Date.now();
 
@@ -243,13 +259,7 @@ export async function POST(_request: Request) {
 
   try {
     // High-water mark
-    const maxIdRes = await supabase
-      .from('orders')
-      .select('apparel_magic_id')
-      .order('apparel_magic_id', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const maxIdInDb = maxIdRes.data ? parseInt(String(maxIdRes.data.apparel_magic_id), 10) : 0;
+    const maxIdInDb = await getMaxNumericId('orders', 'apparel_magic_id');
     const startCursor = maxIdInDb > 0 ? maxIdInDb - 1 : null;
 
     // FK map
@@ -329,6 +339,7 @@ export async function POST(_request: Request) {
         status: 'completed', records_processed: scanned, records_created: created,
         records_updated: updated, errors, completed_at: new Date().toISOString(),
         duration_seconds: duration,
+        error_details: firstError ? { first_error: firstError } : null,
       }).eq('id', syncLogId);
     }
     return NextResponse.json({

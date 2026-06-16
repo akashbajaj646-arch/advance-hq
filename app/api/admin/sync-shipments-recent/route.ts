@@ -99,7 +99,7 @@ function buildShipmentRow(ship: any): Record<string, any> {
     bill_of_lading: ship.bill_of_lading || null,
     shipping_approval_number: ship.shipping_approval_number || null,
     itn: ship.itn || null,
-    ship_via: ship.ship_via || null,
+    // ship_via: dropped -- column does not exist in shipments schema (AM ship_via has no native equivalent)
     pro_number: ship.pro_number || null,
     ship_to_name: ship.name || ship.customer_name || null,
     ship_to_address_1: ship.address_1 || null,
@@ -143,6 +143,22 @@ function buildShipmentRow(ship: any): Record<string, any> {
   };
 }
 
+async function getMaxNumericId(table: string, col: string): Promise<number> {
+  // Primary: true numeric max via RPC. AM id columns are stored as text, so a
+  // plain `.order(col, desc)` returns the LEXICOGRAPHIC max ("9999" > "10416"),
+  // which seeds the cursor too low and re-scans rows we already have.
+  const rpc = await supabase.rpc('max_numeric_id', { tbl: table, col });
+  if (!rpc.error && rpc.data !== null && rpc.data !== undefined) {
+    const n = parseInt(String(rpc.data), 10);
+    if (!isNaN(n)) return n;
+  }
+  // Fallback if the RPC isn't installed yet -- degrades to old behavior, no crash.
+  const res = await supabase.from(table).select(col).order(col, { ascending: false }).limit(1).maybeSingle();
+  const v = res.data ? (res.data as any)[col] : null;
+  const n = v != null ? parseInt(String(v), 10) : 0;
+  return isNaN(n) ? 0 : n;
+}
+
 export async function POST(_request: Request) {
   const startTime = Date.now();
 
@@ -154,13 +170,7 @@ export async function POST(_request: Request) {
   const syncLogId = logInsert.data ? logInsert.data.id : null;
 
   try {
-    const maxIdRes = await supabase
-      .from('shipments')
-      .select('am_shipment_id')
-      .order('am_shipment_id', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const maxIdInDb = maxIdRes.data ? parseInt(String(maxIdRes.data.am_shipment_id), 10) : 0;
+    const maxIdInDb = await getMaxNumericId('shipments', 'am_shipment_id');
     const startCursor = maxIdInDb > 0 ? maxIdInDb - 1 : null;
 
     let scanned = 0, created = 0, updated = 0, skipped = 0, errors = 0;
@@ -302,6 +312,7 @@ export async function POST(_request: Request) {
         status: 'completed', records_processed: scanned, records_created: created,
         records_updated: updated, errors, completed_at: new Date().toISOString(),
         duration_seconds: duration,
+        error_details: firstError ? { first_error: firstError } : null,
       }).eq('id', syncLogId);
     }
     return NextResponse.json({
