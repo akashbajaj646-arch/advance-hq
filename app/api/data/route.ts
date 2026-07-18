@@ -39,6 +39,20 @@ const ALLOWED_TABLES = new Set([
   'v_available_to_cut', 'v_outsource_open', 'v_vendor_performance',
 ]);
 
+// Tables the mutation path may write to. Deliberately narrower than
+// ALLOWED_TABLES: AM-synced tables stay read-only here (sync routes own
+// their writes with the service client directly), and views can't be
+// written at all. Currently: PLM tables only.
+const MUTABLE_TABLES = new Set([
+  'partners', 'raw_materials',
+  'samples', 'sample_versions', 'sample_timeline_events',
+  'tech_pack_measurements', 'sample_bom', 'routing_steps',
+  'sample_milestones',
+  'raw_material_stock', 'stock_movements',
+  'manufacturing_pos', 'manufacturing_po_lines', 'wip_status',
+  'outsource_dispatches', 'outsource_receipts',
+]);
+
 // Allowed RPC functions
 const ALLOWED_RPCS = new Set([
   'get_sales_report', 'get_product_report', 'get_inventory_ar_report', 'get_customer_report',
@@ -71,16 +85,55 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { kind, table, rpc, fn, args, query } = body;
+  const { kind, action, table, rpc, fn, args, query, type, data, filters } = body;
 
   // RPC path
   if (kind === 'rpc') {
     if (!ALLOWED_RPCS.has(fn || rpc)) {
       return NextResponse.json({ error: `RPC not allowed: ${fn || rpc}` }, { status: 403 });
     }
-    const { data, error } = await supabaseAdmin.rpc(fn || rpc, args || {});
+    const { data: rpcData, error } = await supabaseAdmin.rpc(fn || rpc, args || {});
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ data });
+    return NextResponse.json({ data: rpcData });
+  }
+
+  // Mutation path — handles db.ts insert/update/delete ({ action: 'mutate' }).
+  // NOTE: before this handler existed, mutation requests fell through to the
+  // query path below and silently performed a SELECT — writes were dropped.
+  if (action === 'mutate') {
+    if (!table || !MUTABLE_TABLES.has(table)) {
+      return NextResponse.json({ error: `Table not writable: ${table}` }, { status: 403 });
+    }
+    if (type === 'insert') {
+      if (!data) return NextResponse.json({ error: 'Missing data for insert' }, { status: 400 });
+      const { data: out, error } = await supabaseAdmin.from(table).insert(data).select();
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ data: out });
+    }
+    if (type === 'update' || type === 'delete') {
+      // Refuse unfiltered updates/deletes — protects against wiping a table.
+      if (!Array.isArray(filters) || filters.length === 0) {
+        return NextResponse.json({ error: `Refusing ${type} without filters` }, { status: 400 });
+      }
+      let m: any = type === 'update'
+        ? supabaseAdmin.from(table).update(data || {})
+        : supabaseAdmin.from(table).delete();
+      for (const f of filters) {
+        const { op, col, val } = f;
+        switch (op) {
+          case 'eq': m = m.eq(col, val); break;
+          case 'neq': m = m.neq(col, val); break;
+          case 'in': m = m.in(col, val); break;
+          case 'is': m = m.is(col, val); break;
+          default:
+            return NextResponse.json({ error: `Filter op not allowed in mutations: ${op}` }, { status: 400 });
+        }
+      }
+      const { data: out, error } = await m.select();
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ data: out });
+    }
+    return NextResponse.json({ error: `Unknown mutation type: ${type}` }, { status: 400 });
   }
 
   // Table query path
@@ -127,12 +180,12 @@ export async function POST(request: NextRequest) {
   }
 
   if (query?.single) {
-    const { data, error, count } = await (q as any).maybeSingle();
+    const { data: qd, error, count } = await (q as any).maybeSingle();
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ data, count: count ?? null });
+    return NextResponse.json({ data: qd, count: count ?? null });
   }
 
-  const { data, error, count } = await q;
+  const { data: qd, error, count } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ data, count: count ?? null });
+  return NextResponse.json({ data: qd, count: count ?? null });
 }
