@@ -74,6 +74,8 @@ export default function SamplesPage() {
   const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
   const [uploading, setUploading] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [replyTo, setReplyTo] = useState<any | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -167,7 +169,7 @@ export default function SamplesPage() {
     } catch {}
   }
 
-  async function uploadMedia(file: File, eventType: 'image' | 'video' | 'voice') {
+  async function uploadMedia(file: File, eventType: 'image' | 'video' | 'voice', caption: string, replyToId: string | null) {
     if (!selected) return;
     setUploading(true); setErrorMsg('');
     try {
@@ -181,10 +183,10 @@ export default function SamplesPage() {
       // 2. Upload directly to Supabase Storage
       const putRes = await fetch(j1.signedUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
       if (!putRes.ok) throw new Error(`Upload failed (${putRes.status})`);
-      // 3. Record the timeline event
+      // 3. Record the timeline event (with caption + threading)
       const res3 = await fetch('/api/plm/media', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'complete', sample_id: selected.id, version_id: selectedVersionId || null, path: j1.path, event_type: eventType, body: file.name }),
+        body: JSON.stringify({ action: 'complete', sample_id: selected.id, version_id: selectedVersionId || null, path: j1.path, event_type: eventType, body: caption || null, reply_to_event_id: replyToId }),
       });
       const j3 = await res3.json();
       if (j3.error) throw new Error(j3.error);
@@ -195,11 +197,31 @@ export default function SamplesPage() {
     setUploading(false);
   }
 
+  // One unified post: text alone, media alone, or media + caption — optionally as a reply.
+  async function postToTimeline() {
+    if (!selected) return;
+    const text = noteText.trim();
+    const replyId = replyTo?.id || null;
+    if (pendingFile) {
+      const type = pendingFile.type.startsWith('video/') ? 'video' : pendingFile.type.startsWith('audio/') ? 'voice' : 'image';
+      await uploadMedia(pendingFile, type as any, text, replyId);
+      setPendingFile(null);
+    } else if (text) {
+      setSaving(true);
+      await db.insert('sample_timeline_events', { sample_id: selected.id, version_id: selectedVersionId || null, event_type: 'note', body: text, reply_to_event_id: replyId });
+      await reloadDetail(selected.id, selectedVersionId);
+      setSaving(false);
+    } else {
+      return;
+    }
+    setNoteText('');
+    setReplyTo(null);
+  }
+
   function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const type = file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'voice' : 'image';
-    uploadMedia(file, type as any);
+    setPendingFile(file);
     e.target.value = '';
   }
 
@@ -215,7 +237,7 @@ export default function SamplesPage() {
         const blob = new Blob(chunksRef.current, { type: mime });
         const ext = mime.includes('webm') ? 'webm' : 'm4a';
         const file = new File([blob], `voice-note-${Date.now()}.${ext}`, { type: mime });
-        uploadMedia(file, 'voice');
+        setPendingFile(file);
       };
       recorderRef.current = rec;
       rec.start();
@@ -281,15 +303,6 @@ export default function SamplesPage() {
     }
     await logEvent(selected.id, selectedVersionId || null, 'status_change', `Status changed to ${fmtStatus(status)}`);
     await refreshSelected();
-    await reloadDetail(selected.id, selectedVersionId);
-    setSaving(false);
-  }
-
-  async function addNote() {
-    if (!selected || !noteText.trim()) return;
-    setSaving(true);
-    await logEvent(selected.id, selectedVersionId || null, 'note', noteText.trim());
-    setNoteText('');
     await reloadDetail(selected.id, selectedVersionId);
     setSaving(false);
   }
@@ -617,51 +630,79 @@ export default function SamplesPage() {
                 </div>
               )}
 
-              {detailTab === 'timeline' && (
-                <div>
-                  <div className="flex gap-2 mb-2">
-                    <input className={`flex-1 ${inputCls}`} placeholder="Add a note to the timeline..." value={noteText} onChange={e => setNoteText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addNote(); }} />
-                    <button onClick={addNote} disabled={saving || !noteText.trim()} className="px-4 py-2 text-sm bg-brand-600 text-white rounded-lg hover:bg-brand-700 font-medium disabled:opacity-50">Post</button>
-                  </div>
-                  <div className="flex items-center gap-2 mb-4">
-                    <input ref={fileInputRef} type="file" accept="image/*,video/*,audio/*" className="hidden" onChange={onFilePicked} />
-                    <button onClick={() => fileInputRef.current?.click()} disabled={uploading || recording} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50">📎 Photo / Video</button>
-                    {!recording ? (
-                      <button onClick={startRecording} disabled={uploading} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50">🎤 Record Voice Note</button>
-                    ) : (
-                      <button onClick={stopRecording} className="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium animate-pulse">■ Stop &amp; Post</button>
-                    )}
-                    {uploading && <span className="text-xs text-gray-500">Uploading...</span>}
-                    {errorMsg && <span className="text-xs text-red-600">{errorMsg}</span>}
-                  </div>
-                  <div className="space-y-3">
-                    {events.map(ev => {
-                      const ver = versions.find(v => v.id === ev.version_id);
-                      return (
-                        <div key={ev.id} className="flex gap-3">
-                          <div className="text-lg leading-none pt-0.5">{EVENT_ICONS[ev.event_type] || '•'}</div>
-                          <div className="flex-1 border border-gray-100 rounded-lg p-3 bg-gray-50/50">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-medium text-gray-500">{fmtStatus(ev.event_type)}{ver ? ` · v${ver.version_number}` : ''}{ev.author ? ` · ${ev.author}` : ''}</span>
-                              <span className="text-xs text-gray-400">{fmtDateTime(ev.created_at)}</span>
-                            </div>
-                            {ev.body && <p className="text-sm text-gray-900 mt-1">{ev.body}</p>}
-                            {ev.media_url && mediaUrls[ev.media_url] && (
-                              <div className="mt-2">
-                                {ev.event_type === 'image' && <img src={mediaUrls[ev.media_url]} alt={ev.body || 'Sample photo'} className="max-h-64 rounded-lg border border-gray-200" />}
-                                {ev.event_type === 'video' && <video src={mediaUrls[ev.media_url]} controls className="max-h-64 rounded-lg border border-gray-200" />}
-                                {ev.event_type === 'voice' && <audio src={mediaUrls[ev.media_url]} controls className="w-full max-w-md" />}
-                              </div>
-                            )}
-                            {ev.media_url && !mediaUrls[ev.media_url] && <p className="text-xs text-gray-400 mt-1">Loading media...</p>}
+              {detailTab === 'timeline' && (() => {
+                const topLevel = events.filter(e => !e.reply_to_event_id);
+                const repliesFor = (id: string) => events.filter(e => e.reply_to_event_id === id).slice().reverse();
+                const renderEvent = (ev: any, isReply: boolean) => {
+                  const ver = versions.find(v => v.id === ev.version_id);
+                  return (
+                    <div key={ev.id} className="flex gap-3">
+                      {!isReply && <div className="text-lg leading-none pt-0.5">{EVENT_ICONS[ev.event_type] || '•'}</div>}
+                      <div className={`flex-1 border rounded-lg p-3 ${isReply ? 'border-gray-100 bg-white' : 'border-gray-100 bg-gray-50/50'}`}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-gray-500">{fmtStatus(ev.event_type)}{ver ? ` · v${ver.version_number}` : ''}{ev.author ? ` · ${ev.author}` : ''}</span>
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs text-gray-400">{fmtDateTime(ev.created_at)}</span>
+                            <button onClick={() => { setReplyTo(ev); }} className="text-xs text-brand-600 hover:text-brand-700 font-medium">Reply</button>
                           </div>
                         </div>
-                      );
-                    })}
-                    {events.length === 0 && <p className="text-gray-400 text-center py-6">No events yet</p>}
+                        {ev.body && <p className="text-sm text-gray-900 mt-1">{ev.body}</p>}
+                        {ev.media_url && mediaUrls[ev.media_url] && (
+                          <div className="mt-2">
+                            {ev.event_type === 'image' && <img src={mediaUrls[ev.media_url]} alt={ev.body || 'Sample photo'} className="max-h-64 rounded-lg border border-gray-200" />}
+                            {ev.event_type === 'video' && <video src={mediaUrls[ev.media_url]} controls className="max-h-64 rounded-lg border border-gray-200" />}
+                            {ev.event_type === 'voice' && <audio src={mediaUrls[ev.media_url]} controls className="w-full max-w-md" />}
+                          </div>
+                        )}
+                        {ev.media_url && !mediaUrls[ev.media_url] && <p className="text-xs text-gray-400 mt-1">Loading media...</p>}
+                      </div>
+                    </div>
+                  );
+                };
+                return (
+                  <div>
+                    {replyTo && (
+                      <div className="flex items-center justify-between mb-2 px-3 py-2 bg-brand-50 border border-brand-100 rounded-lg">
+                        <span className="text-xs text-gray-600 truncate">Replying to <span className="font-medium">{fmtStatus(replyTo.event_type)}</span>{replyTo.body ? `: "${replyTo.body.slice(0, 60)}${replyTo.body.length > 60 ? '…' : ''}"` : ''}</span>
+                        <button onClick={() => setReplyTo(null)} className="text-xs text-gray-400 hover:text-gray-600 ml-2">✕ Cancel</button>
+                      </div>
+                    )}
+                    {pendingFile && (
+                      <div className="flex items-center justify-between mb-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
+                        <span className="text-xs text-gray-600 truncate">📎 {pendingFile.name} <span className="text-gray-400">({(pendingFile.size / 1048576).toFixed(1)} MB)</span> — add a caption below, then Post</span>
+                        <button onClick={() => setPendingFile(null)} className="text-xs text-gray-400 hover:text-gray-600 ml-2">✕ Remove</button>
+                      </div>
+                    )}
+                    <div className="flex gap-2 mb-2">
+                      <input className={`flex-1 ${inputCls}`} placeholder={pendingFile ? 'Write a caption for this attachment...' : replyTo ? 'Write your reply...' : 'Write a message, or attach a photo/video/voice note...'} value={noteText} onChange={e => setNoteText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') postToTimeline(); }} />
+                      <button onClick={postToTimeline} disabled={saving || uploading || (!noteText.trim() && !pendingFile)} className="px-4 py-2 text-sm bg-brand-600 text-white rounded-lg hover:bg-brand-700 font-medium disabled:opacity-50">{uploading ? 'Uploading...' : 'Post'}</button>
+                    </div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <input ref={fileInputRef} type="file" accept="image/*,video/*,audio/*" className="hidden" onChange={onFilePicked} />
+                      <button onClick={() => fileInputRef.current?.click()} disabled={uploading || recording} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50">📎 Photo / Video</button>
+                      {!recording ? (
+                        <button onClick={startRecording} disabled={uploading || !!pendingFile} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50">🎤 Record Voice Note</button>
+                      ) : (
+                        <button onClick={stopRecording} className="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium animate-pulse">■ Stop Recording</button>
+                      )}
+                      {errorMsg && <span className="text-xs text-red-600">{errorMsg}</span>}
+                    </div>
+                    <div className="space-y-3">
+                      {topLevel.map(ev => (
+                        <div key={ev.id}>
+                          {renderEvent(ev, false)}
+                          {repliesFor(ev.id).length > 0 && (
+                            <div className="ml-10 mt-2 space-y-2 border-l-2 border-gray-100 pl-3">
+                              {repliesFor(ev.id).map(r => renderEvent(r, true))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {events.length === 0 && <p className="text-gray-400 text-center py-6">No messages yet — start the discussion</p>}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {detailTab === 'techpack' && (
                 <div>

@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (action === 'complete') {
-    const { sample_id, version_id, path, event_type, body: eventBody, author } = body;
+    const { sample_id, version_id, path, event_type, body: eventBody, author, reply_to_event_id } = body;
     if (!sample_id || !path) return NextResponse.json({ error: 'Missing sample_id or path' }, { status: 400 });
     if (!EVENT_TYPES.has(event_type)) {
       return NextResponse.json({ error: `Invalid event type: ${event_type}` }, { status: 400 });
@@ -85,6 +85,7 @@ export async function POST(request: NextRequest) {
         media_url: path,
         body: eventBody || null,
         author: author || null,
+        reply_to_event_id: reply_to_event_id || null,
       })
       .select();
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
