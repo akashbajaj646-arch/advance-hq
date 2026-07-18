@@ -130,7 +130,12 @@ export default function SamplesPage() {
     setRouting(rt || []);
     setMilestones(ms || []);
     signMedia(ev || []);
-    const vid = versionId || (v && v.length > 0 ? v[0].id : '');
+    // Single hidden container per sample — measurements/BOM attach to it.
+    let vid = versionId || (v && v.length > 0 ? v[0].id : '');
+    if (!vid) {
+      const vres: any = await db.insert('sample_versions', { sample_id: sampleId, version_number: 1, status: 'draft' });
+      vid = vres.data?.[0]?.id || '';
+    }
     setSelectedVersionId(vid);
     if (vid) await loadVersionData(vid);
     else { setMeasurements([]); setBom([]); }
@@ -265,30 +270,14 @@ export default function SamplesPage() {
     if (res.error) { setErrorMsg(res.error); setSaving(false); return; }
     const sample = res.data?.[0];
     if (sample) {
-      const vres: any = await db.insert('sample_versions', { sample_id: sample.id, version_number: 1, status: 'draft', change_summary: 'Initial version' });
+      const vres: any = await db.insert('sample_versions', { sample_id: sample.id, version_number: 1, status: 'draft' });
       const v1 = vres.data?.[0];
-      await logEvent(sample.id, v1?.id || null, 'version_bump', 'Sample created — v1');
+      await logEvent(sample.id, v1?.id || null, 'note', 'Sample created');
       setShowNew(false);
       setNewForm({ sample_code: '', name: '', description: '', category: '', collection: '', colorway: '', print_notes: '', source_type: 'internal_factory', source_id: '' });
       loadSamples();
       openDetail(sample);
     }
-    setSaving(false);
-  }
-
-  async function newVersion() {
-    if (!selected) return;
-    setSaving(true);
-    const nextNum = (versions[0]?.version_number || selected.current_version || 0) + 1;
-    if (versions[0]) {
-      await db.update('sample_versions', { status: 'superseded' }, [{ op: 'eq', col: 'id', val: versions[0].id }]);
-    }
-    const vres: any = await db.insert('sample_versions', { sample_id: selected.id, version_number: nextNum, status: 'draft' });
-    const nv = vres.data?.[0];
-    await db.update('samples', { current_version: nextNum }, [{ op: 'eq', col: 'id', val: selected.id }]);
-    await logEvent(selected.id, nv?.id || null, 'version_bump', `Version ${nextNum} started`);
-    await refreshSelected();
-    await reloadDetail(selected.id, nv?.id || null);
     setSaving(false);
   }
 
@@ -298,9 +287,6 @@ export default function SamplesPage() {
     const patch: any = { status };
     if (status === 'approved') patch.approved_at = new Date().toISOString();
     await db.update('samples', patch, [{ op: 'eq', col: 'id', val: selected.id }]);
-    if (status === 'approved' && selectedVersionId) {
-      await db.update('sample_versions', { status: 'approved' }, [{ op: 'eq', col: 'id', val: selectedVersionId }]);
-    }
     await logEvent(selected.id, selectedVersionId || null, 'status_change', `Status changed to ${fmtStatus(status)}`);
     await refreshSelected();
     await reloadDetail(selected.id, selectedVersionId);
@@ -424,7 +410,6 @@ export default function SamplesPage() {
   const totalPages = Math.ceil(totalCount / PAGE_SIZE);
   const partnerName = (id: string) => partners.find(p => p.id === id)?.name || '-';
   const materialName = (id: string) => materials.find(m => m.id === id)?.name || '-';
-  const selectedVersion = versions.find(v => v.id === selectedVersionId);
   const outsourcePartners = (op: string) => partners.filter(p => p.partner_type === 'external_vendor' && (p.capabilities || []).includes(op));
   const internalFactories = partners.filter(p => p.partner_type === 'internal_factory');
 
@@ -471,7 +456,6 @@ export default function SamplesPage() {
                   <th className="table-header pb-3 whitespace-nowrap">Code</th>
                   <th className="table-header pb-3 whitespace-nowrap">Name</th>
                   <th className="table-header pb-3 whitespace-nowrap">Status</th>
-                  <th className="table-header pb-3 whitespace-nowrap">Version</th>
                   <th className="table-header pb-3 whitespace-nowrap">Category</th>
                   <th className="table-header pb-3 whitespace-nowrap">Colorway</th>
                   <th className="table-header pb-3 whitespace-nowrap">Source</th>
@@ -483,7 +467,6 @@ export default function SamplesPage() {
                       <td className="table-cell text-sm"><span className="font-medium text-brand-600">{s.sample_code}</span></td>
                       <td className="table-cell text-sm max-w-[220px] truncate">{s.name || '-'}</td>
                       <td className="table-cell text-sm"><span className={`px-2 py-0.5 rounded text-xs font-medium ${statusClass(s.status)}`}>{fmtStatus(s.status)}</span></td>
-                      <td className="table-cell text-sm">v{s.current_version}</td>
                       <td className="table-cell text-sm">{s.category || '-'}</td>
                       <td className="table-cell text-sm">{s.colorway || '-'}</td>
                       <td className="table-cell text-sm">{s.source_id ? partnerName(s.source_id) : (s.source_type ? fmtStatus(s.source_type) : '-')}</td>
@@ -555,7 +538,6 @@ export default function SamplesPage() {
                   <h2 className="text-xl font-bold text-gray-900">{selected.sample_code}{selected.name ? ` — ${selected.name}` : ''}</h2>
                   <div className="flex gap-3 mt-2 items-center flex-wrap">
                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusClass(selected.status)}`}>{fmtStatus(selected.status)}</span>
-                    <span className="text-sm text-gray-500">v{selected.current_version}</span>
                     {selected.category && <span className="text-sm text-gray-500">{selected.category}</span>}
                     {selected.source_id && <span className="text-sm text-gray-500">{partnerName(selected.source_id)}</span>}
                   </div>
@@ -563,7 +545,6 @@ export default function SamplesPage() {
                 <div className="flex items-center gap-2">
                   {selected.status === 'in_development' && (
                     <>
-                      <button onClick={newVersion} disabled={saving} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50">+ New Version</button>
                       <button onClick={() => setSampleStatus('approved')} disabled={saving} className="px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium disabled:opacity-50">Approve</button>
                       <button onClick={() => setSampleStatus('rejected')} disabled={saving} className="px-3 py-1.5 text-xs bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 font-medium disabled:opacity-50">Reject</button>
                     </>
@@ -580,28 +561,18 @@ export default function SamplesPage() {
               )}
 
               <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">
-                {['overview', 'versions', 'timeline', 'techpack', 'bom', 'routing', 'milestones'].map(key => (
+                {['overview', 'timeline', 'techpack', 'bom', 'routing', 'milestones'].map(key => (
                   <button key={key} onClick={() => setDetailTab(key)} className={`px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${detailTab === key ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-                    {key === 'overview' ? 'Overview' : key === 'versions' ? `Versions (${versions.length})` : key === 'timeline' ? `Timeline (${events.length})` : key === 'techpack' ? `Tech Pack (${measurements.length})` : key === 'bom' ? `BOM (${bom.length})` : key === 'routing' ? `Routing (${routing.length})` : `Milestones (${milestones.length})`}
+                    {key === 'overview' ? 'Overview' : key === 'timeline' ? `Timeline (${events.length})` : key === 'techpack' ? `Tech Pack (${measurements.length})` : key === 'bom' ? `BOM (${bom.length})` : key === 'routing' ? `Routing (${routing.length})` : `Milestones (${milestones.length})`}
                   </button>
                 ))}
               </div>
-
-              {/* Version selector shown on version-scoped tabs */}
-              {(detailTab === 'techpack' || detailTab === 'bom') && versions.length > 0 && (
-                <div className="mb-4 flex items-center gap-2">
-                  <span className="text-xs text-gray-400">Version:</span>
-                  <select className={`${inputCls} bg-white`} value={selectedVersionId} onChange={async e => { setSelectedVersionId(e.target.value); await loadVersionData(e.target.value); }}>
-                    {versions.map(v => <option key={v.id} value={v.id}>v{v.version_number} ({fmtStatus(v.status)})</option>)}
-                  </select>
-                </div>
-              )}
 
               {detailTab === 'overview' && (
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {[
                     ['Sample code', selected.sample_code], ['Name', selected.name], ['Status', fmtStatus(selected.status)],
-                    ['Current version', `v${selected.current_version}`], ['Category', selected.category], ['Collection', selected.collection],
+['Category', selected.category], ['Collection', selected.collection],
                     ['Colorway', selected.colorway], ['Print notes', selected.print_notes], ['Source type', fmtStatus(selected.source_type || '')],
                     ['Source', selected.source_id ? partnerName(selected.source_id) : '-'], ['Approved at', fmtDateTime(selected.approved_at)],
                     ['AM style #', selected.am_style_number], ['Created', fmtDateTime(selected.created_at)], ['Updated', fmtDateTime(selected.updated_at)],
@@ -615,32 +586,16 @@ export default function SamplesPage() {
                 </div>
               )}
 
-              {detailTab === 'versions' && (
-                <div className="space-y-2">
-                  {versions.map(v => (
-                    <div key={v.id} className="flex items-center justify-between border border-gray-200 rounded-lg p-3">
-                      <div>
-                        <span className="font-medium text-gray-900">v{v.version_number}</span>
-                        <span className={`ml-3 px-2 py-0.5 rounded text-xs font-medium ${statusClass(v.status)}`}>{fmtStatus(v.status)}</span>
-                        {v.change_summary && <p className="text-sm text-gray-500 mt-1">{v.change_summary}</p>}
-                      </div>
-                      <span className="text-xs text-gray-400">{fmtDateTime(v.created_at)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
               {detailTab === 'timeline' && (() => {
                 const topLevel = events.filter(e => !e.reply_to_event_id);
                 const repliesFor = (id: string) => events.filter(e => e.reply_to_event_id === id).slice().reverse();
                 const renderEvent = (ev: any, isReply: boolean) => {
-                  const ver = versions.find(v => v.id === ev.version_id);
                   return (
                     <div key={ev.id} className="flex gap-3">
                       {!isReply && <div className="text-lg leading-none pt-0.5">{EVENT_ICONS[ev.event_type] || '•'}</div>}
                       <div className={`flex-1 border rounded-lg p-3 ${isReply ? 'border-gray-100 bg-white' : 'border-gray-100 bg-gray-50/50'}`}>
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-medium text-gray-500">{fmtStatus(ev.event_type)}{ver ? ` · v${ver.version_number}` : ''}{ev.author ? ` · ${ev.author}` : ''}</span>
+                          <span className="text-xs font-medium text-gray-500">{fmtStatus(ev.event_type)}{ev.author ? ` · ${ev.author}` : ''}</span>
                           <div className="flex items-center gap-3">
                             <span className="text-xs text-gray-400">{fmtDateTime(ev.created_at)}</span>
                             <button onClick={() => { setReplyTo(ev); }} className="text-xs text-brand-600 hover:text-brand-700 font-medium">Reply</button>

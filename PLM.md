@@ -51,9 +51,12 @@ Migrations live in `plm/migrations/` and run in order:
 
 ## Key modeling decisions
 
-- **BOM and tech pack hang off `sample_versions`, not `samples`.** Each revision owns its own
-  material list and measurement set, so "v1 specs vs v2 specs" is real history, not an
-  overwrite. Promotion reads from the **approved version**.
+- **Versions are hidden (decided July 2026).** Akash's workflow is "tweak one sample until
+  it's right" — user-facing versioning was ceremony. The UI exposes no version concept.
+  `sample_versions` remains in the schema as a single hidden container per sample (auto-created;
+  `tech_pack_measurements` and `sample_bom` still FK into it). Re-enabling versions later is a
+  UI change, not a migration. If still unused at cleanup time, collapse the schema to hang
+  measurements/BOM off `samples` directly.
 - **Routing is defined once per sample and inherited by every PO** for the promoted product.
   A PO does **not** carry its own routing copy. Resolution:
   `manufacturing_pos.product_id → samples.promoted_product_id → routing_steps`.
