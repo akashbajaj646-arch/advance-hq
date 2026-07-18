@@ -82,7 +82,12 @@ export default function SamplesPage() {
 
   // Inline add forms
   const [noteText, setNoteText] = useState('');
-  const [measForm, setMeasForm] = useState<any>({ size: '', point_of_measure: '', target_value: '', unit: 'in' });
+  const [tpSizes, setTpSizes] = useState<string[]>([]);
+  const [tpPoms, setTpPoms] = useState<string[]>([]);
+  const [tpGrid, setTpGrid] = useState<Record<string, { id?: string; value: string }>>({});
+  const [tpUnit, setTpUnit] = useState('in');
+  const [tpNewSize, setTpNewSize] = useState('');
+  const [tpNewPom, setTpNewPom] = useState('');
   const [bomForm, setBomForm] = useState<any>({ material_id: '', consumption_net: '', wastage_pct: '0', cost_per_unit: '', currency: 'INR', notes: '' });
   const [newMatForm, setNewMatForm] = useState<any>({ show: false, name: '', material_type: 'fabric', unit: 'meters' });
   const [routeForm, setRouteForm] = useState<any>({ operation: 'cut', owner_type: 'in_house', owner_id: '' });
@@ -148,6 +153,7 @@ export default function SamplesPage() {
     ]);
     setMeasurements(mm || []);
     setBom(bb || []);
+    buildGrid(mm || []);
   }
 
   async function refreshSelected() {
@@ -293,27 +299,81 @@ export default function SamplesPage() {
     setSaving(false);
   }
 
-  async function addMeasurement() {
-    if (!selected || !selectedVersionId || !measForm.size.trim() || !measForm.point_of_measure.trim()) return;
-    setSaving(true);
-    await db.insert('tech_pack_measurements', {
-      sample_version_id: selectedVersionId,
-      size: measForm.size.trim(),
-      point_of_measure: measForm.point_of_measure.trim(),
-      target_value: measForm.target_value === '' ? null : parseFloat(measForm.target_value),
-      unit: measForm.unit,
+  function buildGrid(rows: any[]) {
+    const SIZE_ORDER = ['XXS','XS','S','M','L','XL','XXL','2XL','3XL','4XL'];
+    const sizes: string[] = []; const poms: string[] = [];
+    const grid: Record<string, { id?: string; value: string }> = {};
+    for (const r of rows) {
+      if (!sizes.includes(r.size)) sizes.push(r.size);
+      if (!poms.includes(r.point_of_measure)) poms.push(r.point_of_measure);
+      grid[`${r.size}|${r.point_of_measure}`] = { id: r.id, value: r.target_value == null ? '' : String(r.target_value) };
+    }
+    sizes.sort((a, b) => {
+      const ia = SIZE_ORDER.indexOf(a.toUpperCase()); const ib = SIZE_ORDER.indexOf(b.toUpperCase());
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1; if (ib !== -1) return 1;
+      return a.localeCompare(b, undefined, { numeric: true });
     });
-    await logEvent(selected.id, selectedVersionId, 'measurement_update', `${measForm.point_of_measure} (${measForm.size}) = ${measForm.target_value} ${measForm.unit}`);
-    setMeasForm({ ...measForm, point_of_measure: '', target_value: '' });
-    await loadVersionData(selectedVersionId);
+    setTpSizes(sizes); setTpPoms(poms); setTpGrid(grid);
+    if (rows.length > 0 && rows[0].unit) setTpUnit(rows[0].unit);
+  }
+
+  function addTpSize() {
+    const v = tpNewSize.trim();
+    if (!v || tpSizes.includes(v)) { setTpNewSize(''); return; }
+    setTpSizes([...tpSizes, v]); setTpNewSize('');
+  }
+
+  function addTpPom() {
+    const v = tpNewPom.trim();
+    if (!v || tpPoms.includes(v)) { setTpNewPom(''); return; }
+    setTpPoms([...tpPoms, v]); setTpNewPom('');
+  }
+
+  async function removeTpSize(size: string) {
+    if (!confirm(`Remove size ${size} and its measurements?`)) return;
+    setSaving(true);
+    const ids = tpPoms.map(pm => tpGrid[`${size}|${pm}`]?.id).filter(Boolean) as string[];
+    if (ids.length > 0) await db.delete('tech_pack_measurements', [{ op: 'in', col: 'id', val: ids }]);
+    if (selectedVersionId) await loadVersionData(selectedVersionId);
+    else setTpSizes(tpSizes.filter(x => x !== size));
     setSaving(false);
   }
 
-  async function deleteMeasurement(id: string) {
+  async function removeTpPom(pom: string) {
+    if (!confirm(`Remove "${pom}" and its measurements?`)) return;
     setSaving(true);
-    await db.delete('tech_pack_measurements', [{ op: 'eq', col: 'id', val: id }]);
+    const ids = tpSizes.map(sz => tpGrid[`${sz}|${pom}`]?.id).filter(Boolean) as string[];
+    if (ids.length > 0) await db.delete('tech_pack_measurements', [{ op: 'in', col: 'id', val: ids }]);
     if (selectedVersionId) await loadVersionData(selectedVersionId);
+    else setTpPoms(tpPoms.filter(x => x !== pom));
     setSaving(false);
+  }
+
+  function setCell(size: string, pom: string, value: string) {
+    setTpGrid(prev => ({ ...prev, [`${size}|${pom}`]: { ...prev[`${size}|${pom}`], value } }));
+  }
+
+  async function saveCell(size: string, pom: string) {
+    if (!selectedVersionId) return;
+    const key = `${size}|${pom}`;
+    const cell = tpGrid[key] || { value: '' };
+    const val = cell.value.trim();
+    if (cell.id) {
+      if (val === '') {
+        await db.delete('tech_pack_measurements', [{ op: 'eq', col: 'id', val: cell.id }]);
+        setTpGrid(prev => ({ ...prev, [key]: { value: '' } }));
+      } else {
+        await db.update('tech_pack_measurements', { target_value: parseFloat(val), unit: tpUnit }, [{ op: 'eq', col: 'id', val: cell.id }]);
+      }
+    } else if (val !== '') {
+      const res: any = await db.insert('tech_pack_measurements', {
+        sample_version_id: selectedVersionId, size, point_of_measure: pom,
+        target_value: parseFloat(val), unit: tpUnit, sort_order: tpPoms.indexOf(pom),
+      });
+      const row = res.data?.[0];
+      if (row) setTpGrid(prev => ({ ...prev, [key]: { id: row.id, value: val } }));
+    }
   }
 
   async function quickCreateMaterial() {
@@ -661,36 +721,70 @@ export default function SamplesPage() {
 
               {detailTab === 'techpack' && (
                 <div>
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4 items-end">
-                    <div><p className="text-xs text-gray-400 mb-1">Size</p><input className={`w-full ${inputCls}`} placeholder="M" value={measForm.size} onChange={e => setMeasForm({ ...measForm, size: e.target.value })} /></div>
-                    <div className="md:col-span-2"><p className="text-xs text-gray-400 mb-1">Point of measure</p><input className={`w-full ${inputCls}`} placeholder="Chest width" value={measForm.point_of_measure} onChange={e => setMeasForm({ ...measForm, point_of_measure: e.target.value })} /></div>
-                    <div><p className="text-xs text-gray-400 mb-1">Target</p><input type="number" className={`w-full ${inputCls}`} value={measForm.target_value} onChange={e => setMeasForm({ ...measForm, target_value: e.target.value })} /></div>
-                    <div className="flex gap-2">
-                      <select className={`${inputCls} bg-white`} value={measForm.unit} onChange={e => setMeasForm({ ...measForm, unit: e.target.value })}><option value="in">in</option><option value="cm">cm</option></select>
-                      <button onClick={addMeasurement} disabled={saving} className="px-3 py-2 text-sm bg-brand-600 text-white rounded-lg hover:bg-brand-700 font-medium disabled:opacity-50">Add</button>
+                  <div className="flex flex-wrap items-end gap-3 mb-4">
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1">Add size (rows)</p>
+                      <div className="flex gap-1">
+                        <input className={`w-24 ${inputCls}`} placeholder="M" value={tpNewSize} onChange={e => setTpNewSize(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addTpSize(); }} />
+                        <button onClick={addTpSize} className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 font-medium">+</button>
+                      </div>
                     </div>
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1">Add measurement (columns)</p>
+                      <div className="flex gap-1">
+                        <input className={`w-48 ${inputCls}`} placeholder="Chest width" value={tpNewPom} onChange={e => setTpNewPom(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addTpPom(); }} />
+                        <button onClick={addTpPom} className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 font-medium">+</button>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1">Unit</p>
+                      <select className={`${inputCls} bg-white`} value={tpUnit} onChange={e => setTpUnit(e.target.value)}><option value="in">in</option><option value="cm">cm</option></select>
+                    </div>
+                    <p className="text-xs text-gray-400 pb-2">Values save automatically as you type and click away.</p>
                   </div>
-                  {measurements.length === 0 ? <p className="text-gray-400 text-center py-6">No measurements for this version</p> : (
-                    <table className="w-full text-sm">
-                      <thead><tr className="bg-gray-50 border-b border-gray-200">
-                        <th className="px-3 py-2 text-left font-medium text-gray-500">Point of measure</th>
-                        <th className="px-3 py-2 text-left font-medium text-gray-500">Size</th>
-                        <th className="px-3 py-2 text-right font-medium text-gray-500">Target</th>
-                        <th className="px-3 py-2 text-left font-medium text-gray-500">Unit</th>
-                        <th className="px-3 py-2"></th>
-                      </tr></thead>
-                      <tbody>
-                        {measurements.map(m => (
-                          <tr key={m.id} className="border-b border-gray-100">
-                            <td className="px-3 py-2 font-medium">{m.point_of_measure}</td>
-                            <td className="px-3 py-2">{m.size}</td>
-                            <td className="px-3 py-2 text-right">{m.target_value ?? '-'}</td>
-                            <td className="px-3 py-2">{m.unit}</td>
-                            <td className="px-3 py-2 text-right"><button onClick={() => deleteMeasurement(m.id)} className="text-xs text-red-500 hover:text-red-700">Remove</button></td>
+                  {tpSizes.length === 0 || tpPoms.length === 0 ? (
+                    <p className="text-gray-400 text-center py-8">Add at least one size and one measurement to start the grid</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="text-sm border-collapse">
+                        <thead>
+                          <tr>
+                            <th className="px-3 py-2 text-left font-medium text-gray-500 bg-gray-50 border border-gray-200 sticky left-0">Size</th>
+                            {tpPoms.map(pm => (
+                              <th key={pm} className="px-2 py-2 font-medium text-gray-600 bg-gray-50 border border-gray-200 min-w-[110px]">
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="truncate">{pm}</span>
+                                  <button onClick={() => removeTpPom(pm)} className="text-gray-300 hover:text-red-500 text-xs shrink-0" title="Remove column">✕</button>
+                                </div>
+                              </th>
+                            ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {tpSizes.map(sz => (
+                            <tr key={sz}>
+                              <td className="px-3 py-1.5 font-medium text-gray-900 bg-gray-50 border border-gray-200 sticky left-0 whitespace-nowrap">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span>{sz}</span>
+                                  <button onClick={() => removeTpSize(sz)} className="text-gray-300 hover:text-red-500 text-xs" title="Remove row">✕</button>
+                                </div>
+                              </td>
+                              {tpPoms.map(pm => (
+                                <td key={pm} className="border border-gray-200 p-0">
+                                  <input
+                                    type="number" step="0.01"
+                                    className="w-full px-2 py-1.5 text-right text-sm outline-none focus:bg-brand-50 border-0"
+                                    value={tpGrid[`${sz}|${pm}`]?.value ?? ''}
+                                    onChange={e => setCell(sz, pm, e.target.value)}
+                                    onBlur={() => saveCell(sz, pm)}
+                                  />
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </div>
               )}
