@@ -27,6 +27,16 @@ const ALLOWED_TABLES = new Set([
   'warehouses', 'package_presets', 'address_validations',
   'notification_templates', 'notification_queue', 'tracking_events',
   'shipping_service_map',
+  // PLM module additions (see PLM.md)
+  'partners', 'raw_materials',
+  'samples', 'sample_versions', 'sample_timeline_events',
+  'tech_pack_measurements', 'sample_bom', 'routing_steps',
+  'sample_milestones',
+  'raw_material_stock', 'stock_movements',
+  'manufacturing_pos', 'manufacturing_po_lines', 'wip_status',
+  'outsource_dispatches', 'outsource_receipts',
+  // PLM read-only views
+  'v_available_to_cut', 'v_outsource_open', 'v_vendor_performance',
 ]);
 
 // Allowed RPC functions

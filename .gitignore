@@ -10,3 +10,4 @@ node_modules/
 # local backups
 *.bak
 .sync-backups/
+.plm-backup-*/
