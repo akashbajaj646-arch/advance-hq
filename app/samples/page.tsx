@@ -86,8 +86,8 @@ export default function SamplesPage() {
   const [tpPoms, setTpPoms] = useState<string[]>([]);
   const [tpGrid, setTpGrid] = useState<Record<string, { id?: string; value: string }>>({});
   const [tpUnit, setTpUnit] = useState('in');
-  const [tpNewSize, setTpNewSize] = useState('');
-  const [tpNewPom, setTpNewPom] = useState('');
+  const [tpSizesInput, setTpSizesInput] = useState('');
+  const [tpPomsInput, setTpPomsInput] = useState('');
   const [bomForm, setBomForm] = useState<any>({ material_id: '', consumption_net: '', wastage_pct: '0', cost_per_unit: '', currency: 'INR', notes: '' });
   const [newMatForm, setNewMatForm] = useState<any>({ show: false, name: '', material_type: 'fabric', unit: 'meters' });
   const [routeForm, setRouteForm] = useState<any>({ operation: 'cut', owner_type: 'in_house', owner_id: '' });
@@ -315,19 +315,44 @@ export default function SamplesPage() {
       return a.localeCompare(b, undefined, { numeric: true });
     });
     setTpSizes(sizes); setTpPoms(poms); setTpGrid(grid);
+    setTpSizesInput(sizes.join(', '));
+    setTpPomsInput(poms.join(', '));
     if (rows.length > 0 && rows[0].unit) setTpUnit(rows[0].unit);
   }
 
-  function addTpSize() {
-    const v = tpNewSize.trim();
-    if (!v || tpSizes.includes(v)) { setTpNewSize(''); return; }
-    setTpSizes([...tpSizes, v]); setTpNewSize('');
+  function parseAxis(input: string): string[] {
+    const out: string[] = [];
+    for (const raw of input.split(',')) {
+      const v = raw.trim();
+      if (v && !out.some(x => x.toLowerCase() === v.toLowerCase())) out.push(v);
+    }
+    return out;
   }
 
-  function addTpPom() {
-    const v = tpNewPom.trim();
-    if (!v || tpPoms.includes(v)) { setTpNewPom(''); return; }
-    setTpPoms([...tpPoms, v]); setTpNewPom('');
+  async function applyAxes() {
+    const nextSizes = parseAxis(tpSizesInput);
+    const nextPoms = parseAxis(tpPomsInput);
+    const removedSizes = tpSizes.filter(sz => !nextSizes.some(x => x.toLowerCase() === sz.toLowerCase()));
+    const removedPoms = tpPoms.filter(pm => !nextPoms.some(x => x.toLowerCase() === pm.toLowerCase()));
+    const ids: string[] = [];
+    for (const sz of removedSizes) for (const pm of tpPoms) { const c = tpGrid[`${sz}|${pm}`]; if (c?.id) ids.push(c.id); }
+    for (const pm of removedPoms) for (const sz of tpSizes) { const c = tpGrid[`${sz}|${pm}`]; if (c?.id && !ids.includes(c.id)) ids.push(c.id); }
+    if (ids.length > 0 && !confirm(`This removes ${ids.length} saved measurement${ids.length === 1 ? '' : 's'} (${[...removedSizes, ...removedPoms].join(', ')}). Continue?`)) return;
+    setSaving(true);
+    if (ids.length > 0) await db.delete('tech_pack_measurements', [{ op: 'in', col: 'id', val: ids }]);
+    // Preserve the user's typed order; carry existing cell data across (case-insensitive match)
+    const grid: Record<string, { id?: string; value: string }> = {};
+    for (const sz of nextSizes) {
+      const oldSz = tpSizes.find(x => x.toLowerCase() === sz.toLowerCase()) || sz;
+      for (const pm of nextPoms) {
+        const oldPm = tpPoms.find(x => x.toLowerCase() === pm.toLowerCase()) || pm;
+        const c = tpGrid[`${oldSz}|${oldPm}`];
+        if (c) grid[`${sz}|${pm}`] = c;
+      }
+    }
+    setTpSizes(nextSizes); setTpPoms(nextPoms); setTpGrid(grid);
+    setTpSizesInput(nextSizes.join(', ')); setTpPomsInput(nextPoms.join(', '));
+    setSaving(false);
   }
 
   async function removeTpSize(size: string) {
@@ -336,7 +361,7 @@ export default function SamplesPage() {
     const ids = tpPoms.map(pm => tpGrid[`${size}|${pm}`]?.id).filter(Boolean) as string[];
     if (ids.length > 0) await db.delete('tech_pack_measurements', [{ op: 'in', col: 'id', val: ids }]);
     if (selectedVersionId) await loadVersionData(selectedVersionId);
-    else setTpSizes(tpSizes.filter(x => x !== size));
+    else { const next = tpSizes.filter(x => x !== size); setTpSizes(next); setTpSizesInput(next.join(', ')); }
     setSaving(false);
   }
 
@@ -346,7 +371,7 @@ export default function SamplesPage() {
     const ids = tpSizes.map(sz => tpGrid[`${sz}|${pom}`]?.id).filter(Boolean) as string[];
     if (ids.length > 0) await db.delete('tech_pack_measurements', [{ op: 'in', col: 'id', val: ids }]);
     if (selectedVersionId) await loadVersionData(selectedVersionId);
-    else setTpPoms(tpPoms.filter(x => x !== pom));
+    else { const next = tpPoms.filter(x => x !== pom); setTpPoms(next); setTpPomsInput(next.join(', ')); }
     setSaving(false);
   }
 
@@ -721,27 +746,24 @@ export default function SamplesPage() {
 
               {detailTab === 'techpack' && (
                 <div>
-                  <div className="flex flex-wrap items-end gap-3 mb-4">
-                    <div>
-                      <p className="text-xs text-gray-400 mb-1">Add size (rows)</p>
-                      <div className="flex gap-1">
-                        <input className={`w-24 ${inputCls}`} placeholder="M" value={tpNewSize} onChange={e => setTpNewSize(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addTpSize(); }} />
-                        <button onClick={addTpSize} className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 font-medium">+</button>
-                      </div>
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-4 items-end">
+                    <div className="md:col-span-4">
+                      <p className="text-xs text-gray-400 mb-1">Sizes — Y axis (comma separated)</p>
+                      <input className={`w-full ${inputCls}`} placeholder="S, M, L, XL" value={tpSizesInput} onChange={e => setTpSizesInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') applyAxes(); }} />
                     </div>
-                    <div>
-                      <p className="text-xs text-gray-400 mb-1">Add measurement (columns)</p>
-                      <div className="flex gap-1">
-                        <input className={`w-48 ${inputCls}`} placeholder="Chest width" value={tpNewPom} onChange={e => setTpNewPom(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addTpPom(); }} />
-                        <button onClick={addTpPom} className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 font-medium">+</button>
-                      </div>
+                    <div className="md:col-span-5">
+                      <p className="text-xs text-gray-400 mb-1">Measurements — X axis (comma separated)</p>
+                      <input className={`w-full ${inputCls}`} placeholder="Chest, Hem, HPS, Center Back Length" value={tpPomsInput} onChange={e => setTpPomsInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') applyAxes(); }} />
                     </div>
-                    <div>
+                    <div className="md:col-span-1">
                       <p className="text-xs text-gray-400 mb-1">Unit</p>
-                      <select className={`${inputCls} bg-white`} value={tpUnit} onChange={e => setTpUnit(e.target.value)}><option value="in">in</option><option value="cm">cm</option></select>
+                      <select className={`w-full ${inputCls} bg-white`} value={tpUnit} onChange={e => setTpUnit(e.target.value)}><option value="in">in</option><option value="cm">cm</option></select>
                     </div>
-                    <p className="text-xs text-gray-400 pb-2">Values save automatically as you type and click away.</p>
+                    <div className="md:col-span-2">
+                      <button onClick={applyAxes} disabled={saving} className="w-full px-3 py-2 text-sm bg-brand-600 text-white rounded-lg hover:bg-brand-700 font-medium disabled:opacity-50">{tpSizes.length === 0 ? 'Create Grid' : 'Update Grid'}</button>
+                    </div>
                   </div>
+                  <p className="text-xs text-gray-400 mb-3">Values save automatically as you click away from a cell. Edit the lists above and hit Update to add or remove rows/columns.</p>
                   {tpSizes.length === 0 || tpPoms.length === 0 ? (
                     <p className="text-gray-400 text-center py-8">Add at least one size and one measurement to start the grid</p>
                   ) : (
