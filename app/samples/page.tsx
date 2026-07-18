@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '@/lib/db';
 
 const PAGE_SIZE = 20;
@@ -70,6 +70,14 @@ export default function SamplesPage() {
   const [showNew, setShowNew] = useState(false);
   const [newForm, setNewForm] = useState<any>({ sample_code: '', name: '', description: '', category: '', collection: '', colorway: '', print_notes: '', source_type: 'internal_factory', source_id: '' });
 
+  // Media state
+  const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
+  const [uploading, setUploading] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   // Inline add forms
   const [noteText, setNoteText] = useState('');
   const [measForm, setMeasForm] = useState<any>({ size: '', point_of_measure: '', target_value: '', unit: 'in' });
@@ -119,6 +127,7 @@ export default function SamplesPage() {
     setEvents(ev || []);
     setRouting(rt || []);
     setMilestones(ms || []);
+    signMedia(ev || []);
     const vid = versionId || (v && v.length > 0 ? v[0].id : '');
     setSelectedVersionId(vid);
     if (vid) await loadVersionData(vid);
@@ -143,6 +152,83 @@ export default function SamplesPage() {
 
   async function logEvent(sampleId: string, versionId: string | null, eventType: string, body: string) {
     await db.insert('sample_timeline_events', { sample_id: sampleId, version_id: versionId || null, event_type: eventType, body });
+  }
+
+  async function signMedia(evs: any[]) {
+    const paths = evs.filter(e => e.media_url).map(e => e.media_url);
+    if (paths.length === 0) return;
+    try {
+      const res = await fetch('/api/plm/media', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sign', paths }),
+      });
+      const json = await res.json();
+      if (json.data) setMediaUrls(prev => ({ ...prev, ...json.data }));
+    } catch {}
+  }
+
+  async function uploadMedia(file: File, eventType: 'image' | 'video' | 'voice') {
+    if (!selected) return;
+    setUploading(true); setErrorMsg('');
+    try {
+      // 1. Get a signed upload URL (file goes straight to storage, not through Vercel)
+      const res1 = await fetch('/api/plm/media', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'create-upload', sample_id: selected.id, filename: file.name, content_type: file.type }),
+      });
+      const j1 = await res1.json();
+      if (j1.error) throw new Error(j1.error);
+      // 2. Upload directly to Supabase Storage
+      const putRes = await fetch(j1.signedUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
+      if (!putRes.ok) throw new Error(`Upload failed (${putRes.status})`);
+      // 3. Record the timeline event
+      const res3 = await fetch('/api/plm/media', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'complete', sample_id: selected.id, version_id: selectedVersionId || null, path: j1.path, event_type: eventType, body: file.name }),
+      });
+      const j3 = await res3.json();
+      if (j3.error) throw new Error(j3.error);
+      await reloadDetail(selected.id, selectedVersionId);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Upload failed');
+    }
+    setUploading(false);
+  }
+
+  function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const type = file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'voice' : 'image';
+    uploadMedia(file, type as any);
+    e.target.value = '';
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+      const rec = new MediaRecorder(stream, { mimeType: mime });
+      chunksRef.current = [];
+      rec.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      rec.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(chunksRef.current, { type: mime });
+        const ext = mime.includes('webm') ? 'webm' : 'm4a';
+        const file = new File([blob], `voice-note-${Date.now()}.${ext}`, { type: mime });
+        uploadMedia(file, 'voice');
+      };
+      recorderRef.current = rec;
+      rec.start();
+      setRecording(true);
+    } catch {
+      setErrorMsg('Microphone access denied — allow it in your browser to record voice notes');
+    }
+  }
+
+  function stopRecording() {
+    recorderRef.current?.stop();
+    recorderRef.current = null;
+    setRecording(false);
   }
 
   // ---------- Actions ----------
@@ -533,11 +619,21 @@ export default function SamplesPage() {
 
               {detailTab === 'timeline' && (
                 <div>
-                  <div className="flex gap-2 mb-4">
+                  <div className="flex gap-2 mb-2">
                     <input className={`flex-1 ${inputCls}`} placeholder="Add a note to the timeline..." value={noteText} onChange={e => setNoteText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addNote(); }} />
                     <button onClick={addNote} disabled={saving || !noteText.trim()} className="px-4 py-2 text-sm bg-brand-600 text-white rounded-lg hover:bg-brand-700 font-medium disabled:opacity-50">Post</button>
                   </div>
-                  <p className="text-xs text-gray-400 mb-3">Photos, video &amp; voice notes arrive with the media upload build (needs the storage bucket).</p>
+                  <div className="flex items-center gap-2 mb-4">
+                    <input ref={fileInputRef} type="file" accept="image/*,video/*,audio/*" className="hidden" onChange={onFilePicked} />
+                    <button onClick={() => fileInputRef.current?.click()} disabled={uploading || recording} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50">📎 Photo / Video</button>
+                    {!recording ? (
+                      <button onClick={startRecording} disabled={uploading} className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50">🎤 Record Voice Note</button>
+                    ) : (
+                      <button onClick={stopRecording} className="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium animate-pulse">■ Stop &amp; Post</button>
+                    )}
+                    {uploading && <span className="text-xs text-gray-500">Uploading...</span>}
+                    {errorMsg && <span className="text-xs text-red-600">{errorMsg}</span>}
+                  </div>
                   <div className="space-y-3">
                     {events.map(ev => {
                       const ver = versions.find(v => v.id === ev.version_id);
@@ -550,6 +646,14 @@ export default function SamplesPage() {
                               <span className="text-xs text-gray-400">{fmtDateTime(ev.created_at)}</span>
                             </div>
                             {ev.body && <p className="text-sm text-gray-900 mt-1">{ev.body}</p>}
+                            {ev.media_url && mediaUrls[ev.media_url] && (
+                              <div className="mt-2">
+                                {ev.event_type === 'image' && <img src={mediaUrls[ev.media_url]} alt={ev.body || 'Sample photo'} className="max-h-64 rounded-lg border border-gray-200" />}
+                                {ev.event_type === 'video' && <video src={mediaUrls[ev.media_url]} controls className="max-h-64 rounded-lg border border-gray-200" />}
+                                {ev.event_type === 'voice' && <audio src={mediaUrls[ev.media_url]} controls className="w-full max-w-md" />}
+                              </div>
+                            )}
+                            {ev.media_url && !mediaUrls[ev.media_url] && <p className="text-xs text-gray-400 mt-1">Loading media...</p>}
                           </div>
                         </div>
                       );
