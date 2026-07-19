@@ -120,10 +120,11 @@ export default function SamplesPage() {
     setSelected(sample);
     setDetailTab('overview');
     setErrorMsg('');
-    await reloadDetail(sample.id, null);
+    setTpSizes(sample.tp_sizes || []); setTpPoms(sample.tp_poms || []);
+    await reloadDetail(sample.id, null, sample.tp_sizes || [], sample.tp_poms || []);
   }
 
-  async function reloadDetail(sampleId: string, versionId: string | null) {
+  async function reloadDetail(sampleId: string, versionId: string | null, axisSizes?: string[], axisPoms?: string[]) {
     const [{ data: v }, { data: ev }, { data: rt }, { data: ms }] = await Promise.all([
       db.from('sample_versions').select('*').eq('sample_id', sampleId).order('version_number', { ascending: false }),
       db.from('sample_timeline_events').select('*').eq('sample_id', sampleId).order('created_at', { ascending: false }).limit(200),
@@ -142,18 +143,18 @@ export default function SamplesPage() {
       vid = vres.data?.[0]?.id || '';
     }
     setSelectedVersionId(vid);
-    if (vid) await loadVersionData(vid);
+    if (vid) await loadVersionData(vid, axisSizes, axisPoms);
     else { setMeasurements([]); setBom([]); }
   }
 
-  async function loadVersionData(versionId: string) {
+  async function loadVersionData(versionId: string, axisSizes?: string[], axisPoms?: string[]) {
     const [{ data: mm }, { data: bb }] = await Promise.all([
       db.from('tech_pack_measurements').select('*').eq('sample_version_id', versionId).order('sort_order').order('point_of_measure'),
       db.from('sample_bom').select('*').eq('sample_version_id', versionId).order('created_at'),
     ]);
     setMeasurements(mm || []);
     setBom(bb || []);
-    buildGrid(mm || []);
+    buildGrid(mm || [], axisSizes, axisPoms);
   }
 
   async function refreshSelected() {
@@ -299,21 +300,17 @@ export default function SamplesPage() {
     setSaving(false);
   }
 
-  function buildGrid(rows: any[]) {
-    const SIZE_ORDER = ['XXS','XS','S','M','L','XL','XXL','2XL','3XL','4XL'];
-    const sizes: string[] = []; const poms: string[] = [];
+  function buildGrid(rows: any[], axisSizes?: string[], axisPoms?: string[]) {
+    const sizes: string[] = [...(axisSizes || tpSizes)];
+    const poms: string[] = [...(axisPoms || tpPoms)];
     const grid: Record<string, { id?: string; value: string }> = {};
     for (const r of rows) {
-      if (!sizes.includes(r.size)) sizes.push(r.size);
-      if (!poms.includes(r.point_of_measure)) poms.push(r.point_of_measure);
-      grid[`${r.size}|${r.point_of_measure}`] = { id: r.id, value: r.target_value == null ? '' : String(r.target_value) };
+      if (!sizes.some(x => x.toLowerCase() === String(r.size).toLowerCase())) sizes.push(r.size);
+      if (!poms.some(x => x.toLowerCase() === String(r.point_of_measure).toLowerCase())) poms.push(r.point_of_measure);
+      const sz = sizes.find(x => x.toLowerCase() === String(r.size).toLowerCase()) || r.size;
+      const pm = poms.find(x => x.toLowerCase() === String(r.point_of_measure).toLowerCase()) || r.point_of_measure;
+      grid[`${sz}|${pm}`] = { id: r.id, value: r.target_value == null ? '' : String(r.target_value) };
     }
-    sizes.sort((a, b) => {
-      const ia = SIZE_ORDER.indexOf(a.toUpperCase()); const ib = SIZE_ORDER.indexOf(b.toUpperCase());
-      if (ia !== -1 && ib !== -1) return ia - ib;
-      if (ia !== -1) return -1; if (ib !== -1) return 1;
-      return a.localeCompare(b, undefined, { numeric: true });
-    });
     setTpSizes(sizes); setTpPoms(poms); setTpGrid(grid);
     setTpSizesInput(sizes.join(', '));
     setTpPomsInput(poms.join(', '));
@@ -329,29 +326,45 @@ export default function SamplesPage() {
     return out;
   }
 
-  async function applyAxes() {
-    const nextSizes = parseAxis(tpSizesInput);
-    const nextPoms = parseAxis(tpPomsInput);
-    const removedSizes = tpSizes.filter(sz => !nextSizes.some(x => x.toLowerCase() === sz.toLowerCase()));
-    const removedPoms = tpPoms.filter(pm => !nextPoms.some(x => x.toLowerCase() === pm.toLowerCase()));
+  async function applySizes() {
+    if (!selected) return;
+    const next = parseAxis(tpSizesInput);
+    const removed = tpSizes.filter(sz => !next.some(x => x.toLowerCase() === sz.toLowerCase()));
     const ids: string[] = [];
-    for (const sz of removedSizes) for (const pm of tpPoms) { const c = tpGrid[`${sz}|${pm}`]; if (c?.id) ids.push(c.id); }
-    for (const pm of removedPoms) for (const sz of tpSizes) { const c = tpGrid[`${sz}|${pm}`]; if (c?.id && !ids.includes(c.id)) ids.push(c.id); }
-    if (ids.length > 0 && !confirm(`This removes ${ids.length} saved measurement${ids.length === 1 ? '' : 's'} (${[...removedSizes, ...removedPoms].join(', ')}). Continue?`)) return;
+    for (const sz of removed) for (const pm of tpPoms) { const c = tpGrid[`${sz}|${pm}`]; if (c?.id) ids.push(c.id); }
+    if (ids.length > 0 && !confirm(`Removing ${removed.join(', ')} deletes ${ids.length} saved measurement${ids.length === 1 ? '' : 's'}. Continue?`)) return;
     setSaving(true);
     if (ids.length > 0) await db.delete('tech_pack_measurements', [{ op: 'in', col: 'id', val: ids }]);
-    // Preserve the user's typed order; carry existing cell data across (case-insensitive match)
+    await db.update('samples', { tp_sizes: next }, [{ op: 'eq', col: 'id', val: selected.id }]);
+    setSelected({ ...selected, tp_sizes: next });
     const grid: Record<string, { id?: string; value: string }> = {};
-    for (const sz of nextSizes) {
+    for (const sz of next) {
       const oldSz = tpSizes.find(x => x.toLowerCase() === sz.toLowerCase()) || sz;
-      for (const pm of nextPoms) {
+      for (const pm of tpPoms) { const c = tpGrid[`${oldSz}|${pm}`]; if (c) grid[`${sz}|${pm}`] = c; }
+    }
+    setTpSizes(next); setTpGrid(grid); setTpSizesInput(next.join(', '));
+    setSaving(false);
+  }
+
+  async function applyPoms() {
+    if (!selected) return;
+    const next = parseAxis(tpPomsInput);
+    const removed = tpPoms.filter(pm => !next.some(x => x.toLowerCase() === pm.toLowerCase()));
+    const ids: string[] = [];
+    for (const pm of removed) for (const sz of tpSizes) { const c = tpGrid[`${sz}|${pm}`]; if (c?.id) ids.push(c.id); }
+    if (ids.length > 0 && !confirm(`Removing ${removed.join(', ')} deletes ${ids.length} saved measurement${ids.length === 1 ? '' : 's'}. Continue?`)) return;
+    setSaving(true);
+    if (ids.length > 0) await db.delete('tech_pack_measurements', [{ op: 'in', col: 'id', val: ids }]);
+    await db.update('samples', { tp_poms: next }, [{ op: 'eq', col: 'id', val: selected.id }]);
+    setSelected({ ...selected, tp_poms: next });
+    const grid: Record<string, { id?: string; value: string }> = {};
+    for (const sz of tpSizes) {
+      for (const pm of next) {
         const oldPm = tpPoms.find(x => x.toLowerCase() === pm.toLowerCase()) || pm;
-        const c = tpGrid[`${oldSz}|${oldPm}`];
-        if (c) grid[`${sz}|${pm}`] = c;
+        const c = tpGrid[`${sz}|${oldPm}`]; if (c) grid[`${sz}|${pm}`] = c;
       }
     }
-    setTpSizes(nextSizes); setTpPoms(nextPoms); setTpGrid(grid);
-    setTpSizesInput(nextSizes.join(', ')); setTpPomsInput(nextPoms.join(', '));
+    setTpPoms(next); setTpGrid(grid); setTpPomsInput(next.join(', '));
     setSaving(false);
   }
 
@@ -360,8 +373,10 @@ export default function SamplesPage() {
     setSaving(true);
     const ids = tpPoms.map(pm => tpGrid[`${size}|${pm}`]?.id).filter(Boolean) as string[];
     if (ids.length > 0) await db.delete('tech_pack_measurements', [{ op: 'in', col: 'id', val: ids }]);
-    if (selectedVersionId) await loadVersionData(selectedVersionId);
-    else { const next = tpSizes.filter(x => x !== size); setTpSizes(next); setTpSizesInput(next.join(', ')); }
+    const next = tpSizes.filter(x => x !== size);
+    if (selected) { await db.update('samples', { tp_sizes: next }, [{ op: 'eq', col: 'id', val: selected.id }]); setSelected({ ...selected, tp_sizes: next }); }
+    if (selectedVersionId) await loadVersionData(selectedVersionId, next, tpPoms);
+    else { setTpSizes(next); setTpSizesInput(next.join(', ')); }
     setSaving(false);
   }
 
@@ -370,8 +385,10 @@ export default function SamplesPage() {
     setSaving(true);
     const ids = tpSizes.map(sz => tpGrid[`${sz}|${pom}`]?.id).filter(Boolean) as string[];
     if (ids.length > 0) await db.delete('tech_pack_measurements', [{ op: 'in', col: 'id', val: ids }]);
-    if (selectedVersionId) await loadVersionData(selectedVersionId);
-    else { const next = tpPoms.filter(x => x !== pom); setTpPoms(next); setTpPomsInput(next.join(', ')); }
+    const next = tpPoms.filter(x => x !== pom);
+    if (selected) { await db.update('samples', { tp_poms: next }, [{ op: 'eq', col: 'id', val: selected.id }]); setSelected({ ...selected, tp_poms: next }); }
+    if (selectedVersionId) await loadVersionData(selectedVersionId, tpSizes, next);
+    else { setTpPoms(next); setTpPomsInput(next.join(', ')); }
     setSaving(false);
   }
 
@@ -428,14 +445,14 @@ export default function SamplesPage() {
       notes: bomForm.notes || null,
     });
     setBomForm({ material_id: '', consumption_net: '', wastage_pct: '0', cost_per_unit: '', currency: bomForm.currency, notes: '' });
-    await loadVersionData(selectedVersionId);
+    await loadVersionData(selectedVersionId, tpSizes, tpPoms);
     setSaving(false);
   }
 
   async function deleteBomLine(id: string) {
     setSaving(true);
     await db.delete('sample_bom', [{ op: 'eq', col: 'id', val: id }]);
-    if (selectedVersionId) await loadVersionData(selectedVersionId);
+    if (selectedVersionId) await loadVersionData(selectedVersionId, tpSizes, tpPoms);
     setSaving(false);
   }
 
@@ -746,26 +763,35 @@ export default function SamplesPage() {
 
               {detailTab === 'techpack' && (
                 <div>
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-4 items-end">
-                    <div className="md:col-span-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-2">
+                    <div>
                       <p className="text-xs text-gray-400 mb-1">Sizes — Y axis (comma separated)</p>
-                      <input className={`w-full ${inputCls}`} placeholder="S, M, L, XL" value={tpSizesInput} onChange={e => setTpSizesInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') applyAxes(); }} />
+                      <div className="flex gap-2">
+                        <input className={`flex-1 ${inputCls}`} placeholder="S, M, L, XL" value={tpSizesInput} onChange={e => setTpSizesInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') applySizes(); }} />
+                        <button onClick={applySizes} disabled={saving} className="px-3 py-2 text-sm bg-brand-600 text-white rounded-lg hover:bg-brand-700 font-medium disabled:opacity-50 whitespace-nowrap">Apply Sizes</button>
+                      </div>
                     </div>
-                    <div className="md:col-span-5">
+                    <div>
                       <p className="text-xs text-gray-400 mb-1">Measurements — X axis (comma separated)</p>
-                      <input className={`w-full ${inputCls}`} placeholder="Chest, Hem, HPS, Center Back Length" value={tpPomsInput} onChange={e => setTpPomsInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') applyAxes(); }} />
-                    </div>
-                    <div className="md:col-span-1">
-                      <p className="text-xs text-gray-400 mb-1">Unit</p>
-                      <select className={`w-full ${inputCls} bg-white`} value={tpUnit} onChange={e => setTpUnit(e.target.value)}><option value="in">in</option><option value="cm">cm</option></select>
-                    </div>
-                    <div className="md:col-span-2">
-                      <button onClick={applyAxes} disabled={saving} className="w-full px-3 py-2 text-sm bg-brand-600 text-white rounded-lg hover:bg-brand-700 font-medium disabled:opacity-50">{tpSizes.length === 0 ? 'Create Grid' : 'Update Grid'}</button>
+                      <div className="flex gap-2">
+                        <input className={`flex-1 ${inputCls}`} placeholder="Chest, Hem, HPS, Center Back Length" value={tpPomsInput} onChange={e => setTpPomsInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') applyPoms(); }} />
+                        <button onClick={applyPoms} disabled={saving} className="px-3 py-2 text-sm bg-brand-600 text-white rounded-lg hover:bg-brand-700 font-medium disabled:opacity-50 whitespace-nowrap">Apply Measurements</button>
+                      </div>
                     </div>
                   </div>
-                  <p className="text-xs text-gray-400 mb-3">Values save automatically as you click away from a cell. Edit the lists above and hit Update to add or remove rows/columns.</p>
-                  {tpSizes.length === 0 || tpPoms.length === 0 ? (
-                    <p className="text-gray-400 text-center py-8">Add at least one size and one measurement to start the grid</p>
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-gray-400">Unit</span>
+                      <select className={`${inputCls} bg-white`} value={tpUnit} onChange={e => setTpUnit(e.target.value)}><option value="in">in</option><option value="cm">cm</option></select>
+                    </div>
+                    <p className="text-xs text-gray-400">Each axis applies on its own — add sizes now, measurements later, or the other way around. Cells save as you click away.</p>
+                  </div>
+                  {tpSizes.length === 0 && tpPoms.length === 0 ? (
+                    <p className="text-gray-400 text-center py-8">Define sizes, measurements, or both above to start the grid</p>
+                  ) : tpPoms.length === 0 ? (
+                    <p className="text-gray-500 text-center py-8">Sizes saved: <span className="font-medium">{tpSizes.join(', ')}</span> — add measurements whenever you're ready</p>
+                  ) : tpSizes.length === 0 ? (
+                    <p className="text-gray-500 text-center py-8">Measurements saved: <span className="font-medium">{tpPoms.join(', ')}</span> — add sizes whenever you're ready</p>
                   ) : (
                     <div className="overflow-x-auto">
                       <table className="text-sm border-collapse">
