@@ -88,6 +88,10 @@ export default function SamplesPage() {
   const [tpUnit, setTpUnit] = useState('in');
   const [tpSizesInput, setTpSizesInput] = useState('');
   const [tpPomsInput, setTpPomsInput] = useState('');
+  const [upcColors, setUpcColors] = useState<string[]>([]);
+  const [upcColorsInput, setUpcColorsInput] = useState('');
+  const [upcGrid, setUpcGrid] = useState<Record<string, { id?: string; value: string }>>({});
+  const [masterUpc, setMasterUpc] = useState('');
   const [bomForm, setBomForm] = useState<any>({ material_id: '', consumption_net: '', wastage_pct: '0', cost_per_unit: '', currency: 'INR', notes: '' });
   const [newMatForm, setNewMatForm] = useState<any>({ show: false, name: '', material_type: 'fabric', unit: 'meters' });
   const [routeForm, setRouteForm] = useState<any>({ operation: 'cut', owner_type: 'in_house', owner_id: '' });
@@ -121,20 +125,26 @@ export default function SamplesPage() {
     setDetailTab('overview');
     setErrorMsg('');
     setTpSizes(sample.tp_sizes || []); setTpPoms(sample.tp_poms || []);
+    setUpcColors(sample.colors || []); setUpcColorsInput((sample.colors || []).join(', '));
+    setMasterUpc(sample.master_pack_upc || '');
     await reloadDetail(sample.id, null, sample.tp_sizes || [], sample.tp_poms || []);
   }
 
   async function reloadDetail(sampleId: string, versionId: string | null, axisSizes?: string[], axisPoms?: string[]) {
-    const [{ data: v }, { data: ev }, { data: rt }, { data: ms }] = await Promise.all([
+    const [{ data: v }, { data: ev }, { data: rt }, { data: ms }, { data: up }] = await Promise.all([
       db.from('sample_versions').select('*').eq('sample_id', sampleId).order('version_number', { ascending: false }),
       db.from('sample_timeline_events').select('*').eq('sample_id', sampleId).order('created_at', { ascending: false }).limit(200),
       db.from('routing_steps').select('*').eq('sample_id', sampleId).order('sequence'),
       db.from('sample_milestones').select('*').eq('sample_id', sampleId).order('due_date'),
+      db.from('sample_upcs').select('*').eq('sample_id', sampleId),
     ]);
     setVersions(v || []);
     setEvents(ev || []);
     setRouting(rt || []);
     setMilestones(ms || []);
+    const ug: Record<string, { id?: string; value: string }> = {};
+    for (const r of (up || [])) ug[`${r.color}|${r.size}`] = { id: r.id, value: r.upc || '' };
+    setUpcGrid(ug);
     signMedia(ev || []);
     // Single hidden container per sample — measurements/BOM attach to it.
     let vid = versionId || (v && v.length > 0 ? v[0].id : '');
@@ -366,6 +376,56 @@ export default function SamplesPage() {
     }
     setTpPoms(next); setTpGrid(grid); setTpPomsInput(next.join(', '));
     setSaving(false);
+  }
+
+  async function applyColors() {
+    if (!selected) return;
+    const next = parseAxis(upcColorsInput);
+    const removed = upcColors.filter(c => !next.some(x => x.toLowerCase() === c.toLowerCase()));
+    const ids: string[] = [];
+    for (const c of removed) for (const sz of tpSizes) { const cell = upcGrid[`${c}|${sz}`]; if (cell?.id) ids.push(cell.id); }
+    if (ids.length > 0 && !confirm(`Removing ${removed.join(', ')} deletes ${ids.length} saved UPC${ids.length === 1 ? '' : 's'}. Continue?`)) return;
+    setSaving(true);
+    if (ids.length > 0) await db.delete('sample_upcs', [{ op: 'in', col: 'id', val: ids }]);
+    await db.update('samples', { colors: next }, [{ op: 'eq', col: 'id', val: selected.id }]);
+    setSelected({ ...selected, colors: next });
+    const grid: Record<string, { id?: string; value: string }> = {};
+    for (const c of next) {
+      const oldC = upcColors.find(x => x.toLowerCase() === c.toLowerCase()) || c;
+      for (const sz of tpSizes) { const cell = upcGrid[`${oldC}|${sz}`]; if (cell) grid[`${c}|${sz}`] = cell; }
+    }
+    setUpcColors(next); setUpcGrid(grid); setUpcColorsInput(next.join(', '));
+    setSaving(false);
+  }
+
+  function setUpcCell(color: string, size: string, value: string) {
+    setUpcGrid(prev => ({ ...prev, [`${color}|${size}`]: { ...prev[`${color}|${size}`], value } }));
+  }
+
+  async function saveUpcCell(color: string, size: string) {
+    if (!selected) return;
+    const key = `${color}|${size}`;
+    const cell = upcGrid[key] || { value: '' };
+    const val = cell.value.trim();
+    if (cell.id) {
+      if (val === '') {
+        await db.delete('sample_upcs', [{ op: 'eq', col: 'id', val: cell.id }]);
+        setUpcGrid(prev => ({ ...prev, [key]: { value: '' } }));
+      } else {
+        await db.update('sample_upcs', { upc: val }, [{ op: 'eq', col: 'id', val: cell.id }]);
+      }
+    } else if (val !== '') {
+      const res: any = await db.insert('sample_upcs', { sample_id: selected.id, color, size, upc: val });
+      const row = res.data?.[0];
+      if (row) setUpcGrid(prev => ({ ...prev, [key]: { id: row.id, value: val } }));
+    }
+  }
+
+  async function saveMasterUpc() {
+    if (!selected) return;
+    const val = masterUpc.trim();
+    await db.update('samples', { master_pack_upc: val || null }, [{ op: 'eq', col: 'id', val: selected.id }]);
+    setSelected({ ...selected, master_pack_upc: val || null });
   }
 
   async function removeTpSize(size: string) {
@@ -663,9 +723,9 @@ export default function SamplesPage() {
               )}
 
               <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">
-                {['overview', 'timeline', 'techpack', 'bom', 'routing', 'milestones'].map(key => (
+                {['overview', 'timeline', 'techpack', 'upcs', 'bom', 'routing', 'milestones'].map(key => (
                   <button key={key} onClick={() => setDetailTab(key)} className={`px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${detailTab === key ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-                    {key === 'overview' ? 'Overview' : key === 'timeline' ? `Timeline (${events.length})` : key === 'techpack' ? `Tech Pack (${measurements.length})` : key === 'bom' ? `BOM (${bom.length})` : key === 'routing' ? `Routing (${routing.length})` : `Milestones (${milestones.length})`}
+                    {key === 'overview' ? 'Overview' : key === 'timeline' ? `Timeline (${events.length})` : key === 'techpack' ? `Tech Pack (${measurements.length})` : key === 'upcs' ? 'UPCs' : key === 'bom' ? `BOM (${bom.length})` : key === 'routing' ? `Routing (${routing.length})` : `Milestones (${milestones.length})`}
                   </button>
                 ))}
               </div>
@@ -834,6 +894,60 @@ export default function SamplesPage() {
                       </table>
                     </div>
                   )}
+                </div>
+              )}
+
+              {detailTab === 'upcs' && (
+                <div>
+                  <div className="mb-2">
+                    <p className="text-xs text-gray-400 mb-1">Colors (comma separated)</p>
+                    <div className="flex gap-2 max-w-xl">
+                      <input className={`flex-1 ${inputCls}`} placeholder="Black, White" value={upcColorsInput} onChange={e => setUpcColorsInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') applyColors(); }} />
+                      <button onClick={applyColors} disabled={saving} className="px-3 py-2 text-sm bg-brand-600 text-white rounded-lg hover:bg-brand-700 font-medium disabled:opacity-50 whitespace-nowrap">Apply Colors</button>
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-400 mb-4">Sizes come from the Tech Pack tab ({tpSizes.length > 0 ? tpSizes.join(', ') : 'none defined yet'}). One UPC per size × color, entered manually for now.</p>
+                  {tpSizes.length === 0 ? (
+                    <p className="text-gray-500 text-center py-8">Define sizes on the Tech Pack tab first — the UPC grid builds from them</p>
+                  ) : upcColors.length === 0 ? (
+                    <p className="text-gray-500 text-center py-8">Add colors above to generate the UPC grid ({tpSizes.length} size{tpSizes.length === 1 ? '' : 's'} × your colors)</p>
+                  ) : (
+                    <div className="overflow-x-auto mb-6">
+                      <table className="text-sm border-collapse">
+                        <thead>
+                          <tr>
+                            <th className="px-3 py-2 text-left font-medium text-gray-500 bg-gray-50 border border-gray-200 sticky left-0">Color</th>
+                            {tpSizes.map(sz => (
+                              <th key={sz} className="px-2 py-2 font-medium text-gray-600 bg-gray-50 border border-gray-200 min-w-[150px]">{sz}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {upcColors.map(c => (
+                            <tr key={c}>
+                              <td className="px-3 py-1.5 font-medium text-gray-900 bg-gray-50 border border-gray-200 sticky left-0 whitespace-nowrap">{c}</td>
+                              {tpSizes.map(sz => (
+                                <td key={sz} className="border border-gray-200 p-0">
+                                  <input
+                                    type="text" inputMode="numeric" placeholder="UPC"
+                                    className="w-full px-2 py-1.5 text-sm outline-none focus:bg-brand-50 border-0 font-mono"
+                                    value={upcGrid[`${c}|${sz}`]?.value ?? ''}
+                                    onChange={e => setUpcCell(c, sz, e.target.value)}
+                                    onBlur={() => saveUpcCell(c, sz)}
+                                  />
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  <div className="max-w-md">
+                    <p className="text-xs text-gray-400 mb-1">Master pack UPC</p>
+                    <input type="text" inputMode="numeric" placeholder="Master / wholesale pack UPC" className={`w-full ${inputCls} font-mono`} value={masterUpc} onChange={e => setMasterUpc(e.target.value)} onBlur={saveMasterUpc} />
+                    <p className="text-xs text-gray-400 mt-1">Saves when you click away.</p>
+                  </div>
                 </div>
               )}
 
