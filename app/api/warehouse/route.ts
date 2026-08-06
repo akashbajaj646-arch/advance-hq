@@ -549,3 +549,25 @@ export async function POST(request: Request) {
     );
   }
 }
+
+// Temporary diagnostics — visit /api/warehouse in the browser while logged in
+export async function GET() {
+  const out: any = {
+    has_service_key: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+    has_anon_key: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    has_url: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+  };
+  const pt = await supabase.from('pick_tickets').select('*', { count: 'exact', head: true });
+  out.pick_tickets_count = pt.count;
+  out.pick_tickets_error = pt.error?.message || null;
+  const sample = await supabase.from('pick_tickets')
+    .select('pick_ticket_id, pick_ticket_date, customer_name')
+    .order('pick_ticket_date', { ascending: false })
+    .limit(3);
+  out.sample = sample.data;
+  out.sample_error = sample.error?.message || null;
+  const wj = await supabase.from('warehouse_jobs').select('*', { count: 'exact', head: true });
+  out.warehouse_jobs_count = wj.count;
+  out.warehouse_jobs_error = wj.error?.message || null;
+  return NextResponse.json(out);
+}
