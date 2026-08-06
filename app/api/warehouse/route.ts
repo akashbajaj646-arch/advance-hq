@@ -40,7 +40,7 @@ export async function POST(request: Request) {
       const search = (body.search || '').trim();
       let q = supabase
         .from('pick_tickets')
-        .select('pick_ticket_id, apparel_magic_order_id, customer_name, customer_po, pick_ticket_date, qty, qty_open, notes')
+        .select('pick_ticket_id, apparel_magic_order_id, customer_name, customer_po, pick_ticket_date, qty, notes')
         .order('pick_ticket_date', { ascending: false })
         .limit(100);
       if (search) {
@@ -571,7 +571,7 @@ export async function GET() {
   out.warehouse_jobs_error = wj.error?.message || null;
   const queue = await supabase
     .from('pick_tickets')
-    .select('pick_ticket_id, apparel_magic_order_id, customer_name, customer_po, pick_ticket_date, qty, qty_open, notes')
+    .select('pick_ticket_id, apparel_magic_order_id, customer_name, customer_po, pick_ticket_date, qty, notes')
     .order('pick_ticket_date', { ascending: false })
     .limit(100);
   out.queue_count = queue.data?.length ?? 0;
