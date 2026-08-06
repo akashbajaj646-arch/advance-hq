@@ -569,5 +569,13 @@ export async function GET() {
   const wj = await supabase.from('warehouse_jobs').select('*', { count: 'exact', head: true });
   out.warehouse_jobs_count = wj.count;
   out.warehouse_jobs_error = wj.error?.message || null;
+  const queue = await supabase
+    .from('pick_tickets')
+    .select('pick_ticket_id, apparel_magic_order_id, customer_name, customer_po, pick_ticket_date, qty, qty_open, notes')
+    .order('pick_ticket_date', { ascending: false })
+    .limit(100);
+  out.queue_count = queue.data?.length ?? 0;
+  out.queue_error = queue.error?.message || null;
+  out.queue_first = queue.data?.[0] || null;
   return NextResponse.json(out);
 }
