@@ -100,11 +100,26 @@ export async function GET(req) {
       }
       if (!invoice) return Response.json({ error: "Invoice not found" }, { status: 404 });
 
-      const { data: rawItems } = await db()
-        .from("invoice_items")
-        .select("style_number, description, color_name, size, qty, unit_price, amount")
-        .eq("apparel_magic_invoice_id", invoice.apparel_magic_id)
-        .order("style_number");
+      // invoice_items keys on a text column, so coerce and try the likely
+      // identifiers in order until one returns rows.
+      const candidates = [invoice.apparel_magic_id, invoice.invoice_number]
+        .filter((v) => v !== null && v !== undefined && v !== "")
+        .map((v) => String(v));
+
+      let rawItems = [];
+      let matchedOn = null;
+      for (const key of candidates) {
+        const { data } = await db()
+          .from("invoice_items")
+          .select("style_number, description, color_name, size, qty, unit_price, amount")
+          .eq("apparel_magic_invoice_id", key)
+          .order("style_number");
+        if (data && data.length) {
+          rawItems = data;
+          matchedOn = key;
+          break;
+        }
+      }
 
       const imgs = await imagesForStyles((rawItems || []).map((i) => i.style_number));
       const items = (rawItems || []).map((i) => ({
@@ -118,7 +133,11 @@ export async function GET(req) {
         imageUrl: imgs[i.style_number] || null,
       }));
 
-      return Response.json({ invoice: { ...toListItem(invoice), ...invoice }, items });
+      return Response.json({
+        invoice: { ...toListItem(invoice), ...invoice },
+        items,
+        debug: { triedKeys: candidates, matchedOn, itemCount: items.length },
+      });
     }
 
     let results = [];
