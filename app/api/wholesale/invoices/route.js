@@ -112,7 +112,7 @@ export async function GET(req) {
       for (const key of candidates) {
         const { data, error } = await db()
           .from("invoice_items")
-          .select("style_number, description, color_name, size, qty, unit_price, amount")
+          .select("*")
           .eq("apparel_magic_invoice_id", key)
           .order("style_number");
         attempts.push({ key, rows: data ? data.length : 0, error: error ? error.message : null });
@@ -137,22 +137,33 @@ export async function GET(req) {
         };
       }
 
-      const imgs = await imagesForStyles((rawItems || []).map((i) => i.style_number));
+      const imgs = await imagesForStyles(
+        (rawItems || []).map((i) => i.style_number || i.style || i.sku)
+      );
+      // Column names vary across the synced schema, so fall back through
+      // the likely candidates rather than naming one in the select.
+      const pick = (row, ...names) => {
+        for (const n of names) {
+          if (row[n] !== null && row[n] !== undefined && row[n] !== "") return row[n];
+        }
+        return null;
+      };
+
       const items = (rawItems || []).map((i) => ({
-        styleNumber: i.style_number,
-        description: i.description,
-        color: i.color_name,
-        size: i.size,
-        qty: Number(i.qty) || 0,
-        unitPrice: Number(i.unit_price) || 0,
-        amount: Number(i.amount) || 0,
-        imageUrl: imgs[i.style_number] || null,
+        styleNumber: pick(i, "style_number", "style", "sku", "item_number"),
+        description: pick(i, "description", "style_description", "item_description", "name"),
+        color: pick(i, "color_name", "color", "color_code", "colour"),
+        size: pick(i, "size", "size_name", "size_code"),
+        qty: Number(pick(i, "qty", "quantity", "qty_shipped")) || 0,
+        unitPrice: Number(pick(i, "unit_price", "price", "unit_cost")) || 0,
+        amount: Number(pick(i, "amount", "extended_amount", "line_total", "total")) || 0,
+        imageUrl: imgs[pick(i, "style_number", "style", "sku")] || null,
       }));
 
       return Response.json({
         invoice: { ...toListItem(invoice), ...invoice },
         items,
-        debug: { triedKeys: candidates, matchedOn, itemCount: items.length, attempts, probe },
+        debug: { triedKeys: candidates, matchedOn, itemCount: items.length, attempts, probe, columns: rawItems[0] ? Object.keys(rawItems[0]) : [] },
       });
     }
 
