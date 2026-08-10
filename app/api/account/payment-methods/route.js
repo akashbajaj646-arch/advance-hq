@@ -7,7 +7,9 @@
 // POST   -> { url } Stripe hosted portal session for adding/updating cards
 // DELETE -> { ok } detach a card, body { paymentMethodId }
 
-import { stripe, resolveStripeCustomer, listCards } from "@/lib/stripe";
+import { getStripe, resolveStripeCustomer, listCards } from "@/lib/stripe";
+
+export const dynamic = "force-dynamic";
 import { verifyCustomerToken } from "@/lib/customerToken";
 
 const corsHeaders = () => ({
@@ -55,7 +57,7 @@ export async function POST(req) {
         new URL(req.url).searchParams.get("token") || ""
       )}`;
 
-    const portal = await stripe.billingPortal.sessions.create({
+    const portal = await getStripe().billingPortal.sessions.create({
       customer: customer.id,
       return_url: returnUrl,
     });
@@ -80,10 +82,10 @@ export async function DELETE(req) {
 
     // Confirm the card belongs to this customer before detaching
     const customer = await resolveStripeCustomer(session.email);
-    const pm = await stripe.paymentMethods.retrieve(paymentMethodId);
+    const pm = await getStripe().paymentMethods.retrieve(paymentMethodId);
     if (pm.customer !== customer.id) return json({ error: "Not found" }, 404);
 
-    await stripe.paymentMethods.detach(paymentMethodId);
+    await getStripe().paymentMethods.detach(paymentMethodId);
     return json({ ok: true });
   } catch (e) {
     console.error("account/payment-methods DELETE:", e);
