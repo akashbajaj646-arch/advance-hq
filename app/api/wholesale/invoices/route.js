@@ -4,17 +4,15 @@
 // GET ?q=<invoice number, order number, or customer>  -> { invoices }
 // GET ?invoice_number=<n>                             -> { invoice, items }
 //
-// Search adapts to column types: it tries a partial (ilike) match and also
-// exact matching for digits, so it works whether invoice_number is text or
-// an integer. Failed variants are skipped instead of failing the request.
+// Deliberately defensive: it selects * rather than naming columns, and each
+// search variant runs independently so a column that doesn't exist in this
+// schema is skipped instead of failing the whole request.
 
 import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 
 const STYLE_COLUMN = "style_number";
-const LIST_COLUMNS =
-  "invoice_number, customer_name, invoice_date, due_date, total_amount, balance_due, payment_status, apparel_magic_order_id";
 
 let _db = null;
 function db() {
@@ -57,11 +55,11 @@ async function imagesForStyles(styles) {
   return map;
 }
 
-/** Runs a filter, returning [] instead of throwing when the column type rejects it. */
+/** Runs a filter, returning [] when the column doesn't exist or the type rejects it. */
 async function tryQuery(build) {
   try {
     const { data, error } = await build(
-      db().from("invoices").select(LIST_COLUMNS).order("invoice_date", { ascending: false }).limit(15)
+      db().from("invoices").select("*").order("invoice_date", { ascending: false }).limit(15)
     );
     if (error) return [];
     return data || [];
@@ -69,6 +67,22 @@ async function tryQuery(build) {
     return [];
   }
 }
+
+const isVoid = (r) => r.void === true || r.is_void === true;
+
+/** Only the fields the picker needs, with fallbacks for naming differences. */
+const toListItem = (r) => ({
+  invoice_number: r.invoice_number,
+  customer_name:
+    r.customer_name || r.ship_to_name || r.bill_to_name || r.customer || "",
+  apparel_magic_customer_id: r.apparel_magic_customer_id ?? null,
+  apparel_magic_order_id: r.apparel_magic_order_id ?? null,
+  invoice_date: r.invoice_date ?? null,
+  due_date: r.due_date ?? null,
+  total_amount: r.total_amount ?? null,
+  balance_due: r.balance_due ?? null,
+  payment_status: r.payment_status ?? null,
+});
 
 export async function GET(req) {
   try {
@@ -104,40 +118,38 @@ export async function GET(req) {
         imageUrl: imgs[i.style_number] || null,
       }));
 
-      return Response.json({ invoice, items });
+      return Response.json({ invoice: { ...toListItem(invoice), ...invoice }, items });
     }
+
+    let results = [];
 
     if (!q) {
-      const { data, error } = await db()
-        .from("invoices")
-        .select(LIST_COLUMNS)
-        .gt("balance_due", 0)
-        .order("invoice_date", { ascending: false })
-        .limit(15);
-      if (error) throw error;
-      return Response.json({ invoices: data || [] });
+      results = await tryQuery((qb) => qb.gt("balance_due", 0));
+    } else {
+      const isNumeric = /^\d+$/.test(q);
+      results.push(...(await tryQuery((qb) => qb.ilike("invoice_number", `%${q}%`))));
+      if (isNumeric) {
+        results.push(...(await tryQuery((qb) => qb.eq("invoice_number", Number(q)))));
+        results.push(...(await tryQuery((qb) => qb.eq("apparel_magic_order_id", Number(q)))));
+        results.push(...(await tryQuery((qb) => qb.eq("apparel_magic_customer_id", Number(q)))));
+      }
+      results.push(...(await tryQuery((qb) => qb.ilike("apparel_magic_order_id", `%${q}%`))));
+      // Customer name may live under a different column, or not exist at all
+      results.push(...(await tryQuery((qb) => qb.ilike("customer_name", `%${q}%`))));
+      results.push(...(await tryQuery((qb) => qb.ilike("ship_to_name", `%${q}%`))));
     }
-
-    const isNumeric = /^\d+$/.test(q);
-    const results = [];
-
-    results.push(...(await tryQuery((qb) => qb.ilike("invoice_number", `%${q}%`))));
-    if (isNumeric) {
-      results.push(...(await tryQuery((qb) => qb.eq("invoice_number", Number(q)))));
-      results.push(...(await tryQuery((qb) => qb.eq("apparel_magic_order_id", Number(q)))));
-    }
-    results.push(...(await tryQuery((qb) => qb.ilike("apparel_magic_order_id", `%${q}%`))));
-    results.push(...(await tryQuery((qb) => qb.ilike("customer_name", `%${q}%`))));
 
     const seen = new Set();
     const invoices = results
+      .filter((r) => !isVoid(r))
       .filter((r) => {
         const k = String(r.invoice_number);
         if (seen.has(k)) return false;
         seen.add(k);
         return true;
       })
-      .slice(0, 25);
+      .slice(0, 25)
+      .map(toListItem);
 
     return Response.json({ invoices });
   } catch (e) {
