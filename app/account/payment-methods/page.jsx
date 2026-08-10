@@ -1,9 +1,8 @@
 "use client";
 // app/account/payment-methods/page.jsx
-// Customer-facing. The link token is exchanged for a short browser session
-// on first load, then stripped from the address bar. When the link carries
-// an invoice, the customer sees every line with a thumbnail they can tap
-// to enlarge, so there is no doubt what they are paying for.
+// Customer-facing payment page. Renders as a fixed full-viewport surface so
+// it escapes the Advance HQ shell entirely, and mirrors Stripe Checkout's
+// split layout so the handoff to Stripe feels like one continuous flow.
 
 import { useEffect, useState } from "react";
 
@@ -14,7 +13,7 @@ const BRAND = {
 
 const money = (cents, currency = "usd") =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(
-    cents / 100
+    (Number(cents) || 0) / 100
   );
 const dollars = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(n) || 0);
@@ -26,6 +25,7 @@ export default function PaymentMethods() {
   const [busy, setBusy] = useState("");
   const [paid, setPaid] = useState(false);
   const [lightbox, setLightbox] = useState(null);
+  const [broken, setBroken] = useState({});
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -42,7 +42,7 @@ export default function PaymentMethods() {
         window.history.replaceState({}, "", window.location.pathname);
         setState({
           loading: false,
-          error: ok ? "" : j.error || "Could not load your cards",
+          error: ok ? "" : j.error || "We couldn't load this page.",
           email: j.email || "",
           cards: j.cards || [],
           pay: j.pay || null,
@@ -50,7 +50,7 @@ export default function PaymentMethods() {
         });
       })
       .catch(() =>
-        setState({ loading: false, error: "Network error. Please try again.", email: "", cards: [], pay: null, invoice: null })
+        setState({ loading: false, error: "Check your connection and reload the page.", email: "", cards: [], pay: null, invoice: null })
       );
   }, []);
 
@@ -71,9 +71,9 @@ export default function PaymentMethods() {
       });
       const j = await r.json();
       if (j.url) window.location.href = j.url;
-      else setState((s) => ({ ...s, error: j.error || "Something went wrong" }));
+      else setState((s) => ({ ...s, error: j.error || "That didn't go through. Try again." }));
     } catch {
-      setState((s) => ({ ...s, error: "Network error. Please try again." }));
+      setState((s) => ({ ...s, error: "Check your connection and try again." }));
     } finally {
       setBusy("");
     }
@@ -81,153 +81,207 @@ export default function PaymentMethods() {
 
   const showPay = state.pay && state.pay.amount > 0 && !paid;
   const items = state.invoice?.items || [];
+  const subtotal = items.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const due = state.pay ? state.pay.amount / 100 : 0;
+  const hasAdjustments = items.length > 0 && Math.abs(subtotal - due) >= 0.01;
 
   return (
-    <div style={{ maxWidth: 660, margin: "0 auto", padding: 24, fontFamily: "system-ui, sans-serif" }}>
-      <h1 style={{ margin: "0 0 4px", fontSize: 26 }}>
-        {showPay ? "Complete Your Payment" : "Payment Methods"}
-      </h1>
-      <p style={{ color: "#666", margin: "0 0 26px" }}>
-        {state.email ? `Account: ${state.email}` : "Manage the cards we keep on file."}
-      </p>
+    <div className="aa-root">
+      <style>{`
+        .aa-root{position:fixed;inset:0;z-index:9999;overflow-y:auto;background:#fff;
+          color:#0A2540;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+          -webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;}
+        .aa-grid{display:grid;grid-template-columns:1fr;min-height:100%;}
+        .aa-summary{background:#F6F9FC;border-bottom:1px solid #E6EBF1;padding:32px 24px 28px;}
+        .aa-action{padding:32px 24px 56px;}
+        .aa-inner{max-width:420px;margin:0 auto;width:100%;}
+        .aa-brand{font-size:13px;font-weight:600;letter-spacing:.02em;color:#425466;margin:0 0 26px;}
+        .aa-label{font-size:13px;color:#425466;margin:0 0 6px;}
+        .aa-amount{font-size:38px;font-weight:700;letter-spacing:-.02em;line-height:1.05;margin:0;}
+        .aa-ref{font-size:14px;color:#425466;margin:8px 0 0;}
+        .aa-items{margin:26px 0 0;border-top:1px solid #E6EBF1;}
+        .aa-row{display:flex;gap:14px;align-items:center;padding:14px 0;border-bottom:1px solid #E6EBF1;}
+        .aa-thumb{width:52px;height:69px;flex:0 0 52px;border-radius:4px;object-fit:cover;
+          background:#E6EBF1;cursor:zoom-in;display:block;}
+        .aa-ph{width:52px;height:69px;flex:0 0 52px;border-radius:4px;background:#E6EBF1;}
+        .aa-name{font-size:14px;font-weight:600;margin:0;}
+        .aa-desc{font-size:13px;color:#425466;margin:2px 0 0;line-height:1.4;}
+        .aa-meta{font-size:12px;color:#8792A2;margin:4px 0 0;}
+        .aa-line{font-size:14px;font-weight:600;white-space:nowrap;}
+        .aa-tot{display:flex;justify-content:space-between;font-size:14px;color:#425466;padding:8px 0;}
+        .aa-tot--final{color:#0A2540;font-weight:700;border-top:1px solid #E6EBF1;margin-top:6px;padding-top:14px;}
+        .aa-btn{width:100%;padding:14px 18px;border:0;border-radius:6px;background:#0A2540;color:#fff;
+          font-size:15px;font-weight:600;cursor:pointer;transition:background .15s ease;}
+        .aa-btn:hover:not(:disabled){background:#1B3A5C;}
+        .aa-btn:disabled{opacity:.55;cursor:default;}
+        .aa-btn--ghost{background:#fff;color:#0A2540;border:1px solid #D5DDE6;font-weight:600;}
+        .aa-btn--ghost:hover:not(:disabled){background:#F6F9FC;}
+        .aa-note{font-size:12px;color:#8792A2;text-align:center;line-height:1.6;margin:14px 0 0;}
+        .aa-h2{font-size:13px;font-weight:600;color:#425466;letter-spacing:.02em;margin:34px 0 12px;}
+        .aa-card{border:1px solid #E6EBF1;border-radius:6px;padding:14px 16px;margin:0 0 10px;}
+        .aa-card b{font-size:14px;font-weight:600;}
+        .aa-card span{display:block;font-size:12px;color:#8792A2;margin-top:3px;}
+        .aa-tag{display:inline-block;margin-left:8px;font-size:10px;font-weight:700;letter-spacing:.06em;
+          background:#E3F1E6;color:#1B7A3D;padding:3px 7px;border-radius:3px;vertical-align:1px;}
+        .aa-alert{padding:14px 16px;border-radius:6px;font-size:14px;line-height:1.6;margin:0 0 22px;}
+        .aa-alert--bad{background:#FDEDED;color:#9E2146;}
+        .aa-alert--good{background:#E3F1E6;color:#1B7A3D;}
+        .aa-empty{border:1px dashed #D5DDE6;border-radius:6px;padding:26px;text-align:center;
+          color:#8792A2;font-size:14px;margin:0 0 10px;}
+        .aa-box{position:fixed;inset:0;background:rgba(10,37,64,.88);display:flex;align-items:center;
+          justify-content:center;padding:24px;z-index:10000;cursor:zoom-out;}
+        .aa-box img{max-width:min(520px,100%);max-height:76vh;object-fit:contain;border-radius:6px;display:block;margin:0 auto;}
+        .aa-root :focus-visible{outline:2px solid #0A66C2;outline-offset:2px;}
+        @media (min-width:900px){
+          .aa-grid{grid-template-columns:1fr 1fr;}
+          .aa-summary{border-bottom:0;border-right:1px solid #E6EBF1;padding:64px 48px;}
+          .aa-action{padding:64px 48px;}
+          .aa-inner{max-width:400px;margin:0;}
+          .aa-summary .aa-inner{margin-left:auto;margin-right:48px;}
+          .aa-amount{font-size:42px;}
+        }
+        @media (prefers-reduced-motion:reduce){.aa-btn{transition:none;}}
+      `}</style>
 
-      {paid && (
-        <div style={{ background: "#e8f5e9", color: "#1b5e20", padding: 16, borderRadius: 8, marginBottom: 20, lineHeight: 1.6 }}>
-          Payment received. Thank you! A receipt is on its way to your email.
-        </div>
-      )}
+      <div className="aa-grid">
+        <section className="aa-summary">
+          <div className="aa-inner">
+            <p className="aa-brand">ADVANCE APPARELS</p>
 
-      {state.loading && <p style={{ color: "#888" }}>Loading...</p>}
+            {state.loading && <p style={{ color: "#8792A2", fontSize: 14 }}>Loading…</p>}
 
-      {state.error && (
-        <div style={{ background: "#fdecea", color: "#b71c1c", padding: 16, borderRadius: 8, marginBottom: 20, lineHeight: 1.6 }}>
-          {state.error}
-        </div>
-      )}
+            {showPay && (
+              <>
+                <p className="aa-label">Amount due</p>
+                <p className="aa-amount">{money(state.pay.amount, state.pay.currency)}</p>
+                <p className="aa-ref">
+                  {state.invoice?.invoiceNumber
+                    ? `Invoice ${state.invoice.invoiceNumber}`
+                    : state.pay.reference}
+                </p>
+              </>
+            )}
 
-      {showPay && (
-        <div style={{ border: "2px solid #000", borderRadius: 10, overflow: "hidden", marginBottom: 28 }}>
-          <div style={{ padding: "22px 22px 18px" }}>
-            <div style={{ color: "#666", fontSize: 12, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 6 }}>
-              Amount due
-            </div>
-            <div style={{ fontSize: 38, fontWeight: 700, lineHeight: 1.1 }}>
-              {money(state.pay.amount, state.pay.currency)}
-            </div>
-            <div style={{ color: "#555", marginTop: 8 }}>
-              {state.invoice?.invoiceNumber
-                ? `Invoice ${state.invoice.invoiceNumber}`
-                : state.pay.reference}
-            </div>
-          </div>
+            {!showPay && !state.loading && (
+              <>
+                <p className="aa-label">Your account</p>
+                <p className="aa-amount" style={{ fontSize: 24 }}>Payment methods</p>
+                <p className="aa-ref">{state.email}</p>
+              </>
+            )}
 
-          {items.length > 0 && (
-            <div style={{ borderTop: "1px solid #eee", background: "#fafafa" }}>
-              <div style={{ padding: "14px 22px 6px", fontSize: 12, fontWeight: 700, color: "#666", textTransform: "uppercase", letterSpacing: 0.8 }}>
-                {items.length} item{items.length === 1 ? "" : "s"}
-              </div>
-              <div style={{ maxHeight: 420, overflowY: "auto" }}>
-                {items.map((it, idx) => (
-                  <div key={idx} style={{ display: "flex", gap: 14, alignItems: "center", padding: "12px 22px", borderTop: idx ? "1px solid #eee" : "none" }}>
-                    {it.imageUrl ? (
+            {showPay && items.length > 0 && (
+              <div className="aa-items">
+                {items.map((it, i) => (
+                  <div className="aa-row" key={i}>
+                    {it.imageUrl && !broken[i] ? (
                       <img
+                        className="aa-thumb"
                         src={it.imageUrl}
-                        alt={it.description || it.styleNumber || "Item"}
+                        alt=""
+                        onError={() => setBroken((b) => ({ ...b, [i]: true }))}
                         onClick={() => setLightbox(it)}
-                        style={{ width: 58, height: 74, objectFit: "cover", borderRadius: 5, cursor: "zoom-in", flexShrink: 0, background: "#eee" }}
                       />
                     ) : (
-                      <div style={{ width: 58, height: 74, borderRadius: 5, background: "#eee", flexShrink: 0 }} />
+                      <div className="aa-ph" />
                     )}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>{it.styleNumber || "Item"}</div>
-                      {it.description && (
-                        <div style={{ color: "#555", fontSize: 13, marginTop: 2 }}>{it.description}</div>
-                      )}
-                      <div style={{ color: "#888", fontSize: 12, marginTop: 3 }}>
-                        {[it.color, it.size].filter(Boolean).join(" / ")}
+                      <p className="aa-name">{it.styleNumber || "Item"}</p>
+                      {it.description && <p className="aa-desc">{it.description}</p>}
+                      <p className="aa-meta">
+                        {[it.color, it.size].filter(Boolean).join(" · ")}
                         {(it.color || it.size) && " · "}
-                        Qty {it.qty} @ {dollars(it.unitPrice)}
-                      </div>
+                        {it.qty} at {dollars(it.unitPrice)}
+                      </p>
                     </div>
-                    <div style={{ fontWeight: 600, fontSize: 14, whiteSpace: "nowrap" }}>
-                      {dollars(it.amount)}
-                    </div>
+                    <div className="aa-line">{dollars(it.amount)}</div>
                   </div>
                 ))}
-              </div>
-            </div>
-          )}
 
-          <div style={{ padding: 22, borderTop: "1px solid #eee" }}>
-            <button
-              onClick={() => go("/api/account/pay", "pay")}
-              disabled={busy === "pay"}
-              style={{ width: "100%", padding: 16, background: "#000", color: "#fff", border: 0, borderRadius: 6, fontWeight: 600, fontSize: 16, cursor: "pointer", opacity: busy === "pay" ? 0.6 : 1 }}>
-              {busy === "pay" ? "Opening secure checkout..." : `Pay ${money(state.pay.amount, state.pay.currency)}`}
-            </button>
-            <p style={{ color: "#888", fontSize: 12, marginTop: 12, textAlign: "center", lineHeight: 1.6 }}>
-              Pay with a saved card, a new card, Link, Apple Pay, or Google Pay.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {!state.loading && !state.error && (
-        <>
-          <h2 style={{ fontSize: 16, margin: "0 0 12px", color: "#333" }}>Cards on file</h2>
-
-          {state.cards.length === 0 && (
-            <div style={{ border: "1px dashed #ccc", borderRadius: 8, padding: 30, textAlign: "center", color: "#888", marginBottom: 16 }}>
-              No cards on file yet.
-            </div>
-          )}
-
-          {state.cards.map((c) => (
-            <div key={c.id} style={{ border: "1px solid #e5e5e5", borderRadius: 8, padding: 16, marginBottom: 10 }}>
-              <div style={{ fontWeight: 600 }}>
-                {BRAND[c.brand] || c.brand} ending in {c.last4}
-                {c.isDefault && (
-                  <span style={{ marginLeft: 10, fontSize: 11, background: "#eef6ee", color: "#1b5e20", padding: "3px 8px", borderRadius: 20, fontWeight: 700, letterSpacing: 0.4 }}>
-                    DEFAULT
-                  </span>
+                {hasAdjustments && (
+                  <>
+                    <div className="aa-tot"><span>Items</span><span>{dollars(subtotal)}</span></div>
+                    <div className="aa-tot">
+                      <span>Shipping and tax</span><span>{dollars(due - subtotal)}</span>
+                    </div>
+                  </>
                 )}
+                <div className="aa-tot aa-tot--final"><span>Total</span><span>{dollars(due)}</span></div>
               </div>
-              <div style={{ color: "#777", fontSize: 13, marginTop: 3 }}>
-                Expires {String(c.expMonth).padStart(2, "0")}/{String(c.expYear).slice(-2)}
+            )}
+          </div>
+        </section>
+
+        <section className="aa-action">
+          <div className="aa-inner">
+            {paid && (
+              <div className="aa-alert aa-alert--good">
+                Payment received. Your receipt is on its way by email.
               </div>
-            </div>
-          ))}
+            )}
 
-          <button
-            onClick={() => go("/api/account/payment-methods", "portal")}
-            disabled={busy === "portal"}
-            style={{ marginTop: 8, width: "100%", padding: 14, background: showPay ? "#fff" : "#000", color: showPay ? "#333" : "#fff", border: showPay ? "1px solid #ccc" : 0, borderRadius: 6, fontWeight: 600, fontSize: 15, cursor: "pointer", opacity: busy === "portal" ? 0.6 : 1 }}>
-            {busy === "portal" ? "Opening..." : state.cards.length ? "Add, update, or remove a card" : "Add a card"}
-          </button>
-        </>
-      )}
+            {state.error && <div className="aa-alert aa-alert--bad">{state.error}</div>}
 
-      <p style={{ color: "#999", fontSize: 12, marginTop: 18, textAlign: "center", lineHeight: 1.6 }}>
-        Card details are entered on Stripe's secure pages and are never stored on our servers.
-      </p>
+            {showPay && (
+              <>
+                <button className="aa-btn" onClick={() => go("/api/account/pay", "pay")} disabled={busy === "pay"}>
+                  {busy === "pay" ? "Opening secure checkout…" : `Pay ${money(state.pay.amount, state.pay.currency)}`}
+                </button>
+                <p className="aa-note">
+                  Continue to Stripe to pay with a saved card, a new card, Link, Apple Pay, or Google Pay.
+                </p>
+              </>
+            )}
+
+            {!state.loading && !state.error && (
+              <>
+                <p className="aa-h2">CARDS ON FILE</p>
+
+                {state.cards.length === 0 && (
+                  <div className="aa-empty">No cards saved yet.</div>
+                )}
+
+                {state.cards.map((c) => (
+                  <div className="aa-card" key={c.id}>
+                    <b>
+                      {BRAND[c.brand] || c.brand} •••• {c.last4}
+                      {c.isDefault && <span className="aa-tag">DEFAULT</span>}
+                    </b>
+                    <span>Expires {String(c.expMonth).padStart(2, "0")}/{String(c.expYear).slice(-2)}</span>
+                  </div>
+                ))}
+
+                <button
+                  className={`aa-btn ${showPay ? "aa-btn--ghost" : ""}`}
+                  onClick={() => go("/api/account/payment-methods", "portal")}
+                  disabled={busy === "portal"}
+                  style={{ marginTop: 4 }}>
+                  {busy === "portal"
+                    ? "Opening…"
+                    : state.cards.length
+                    ? "Manage cards"
+                    : "Add a card"}
+                </button>
+
+                <p className="aa-note">
+                  Card details are entered on Stripe and never stored on our servers.
+                </p>
+              </>
+            )}
+          </div>
+        </section>
+      </div>
 
       {lightbox && (
-        <div
-          onClick={() => setLightbox(null)}
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, zIndex: 1000, cursor: "zoom-out" }}>
-          <div style={{ maxWidth: 560, width: "100%", textAlign: "center" }}>
-            <img
-              src={lightbox.imageUrl}
-              alt={lightbox.description || lightbox.styleNumber || "Item"}
-              style={{ maxWidth: "100%", maxHeight: "78vh", objectFit: "contain", borderRadius: 8 }}
-            />
-            <div style={{ color: "#fff", marginTop: 14, fontSize: 15, fontWeight: 600 }}>
+        <div className="aa-box" onClick={() => setLightbox(null)}>
+          <div>
+            <img src={lightbox.imageUrl} alt={lightbox.description || lightbox.styleNumber || ""} />
+            <p style={{ color: "#fff", textAlign: "center", marginTop: 14, fontSize: 15, fontWeight: 600 }}>
               {lightbox.styleNumber}
-            </div>
-            <div style={{ color: "#ccc", fontSize: 13, marginTop: 4 }}>
+            </p>
+            <p style={{ color: "#B8C4D0", textAlign: "center", marginTop: 4, fontSize: 13 }}>
               {[lightbox.description, lightbox.color, lightbox.size].filter(Boolean).join(" · ")}
-            </div>
+            </p>
           </div>
         </div>
       )}
