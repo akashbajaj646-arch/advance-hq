@@ -1,8 +1,9 @@
 // app/api/wholesale/portal-link/route.js
 // INTERNAL, protected by the existing middleware session check.
 //
-// POST { email, minutes?, amount?, reference? } -> { url, expiresAt }
-//   amount is in dollars; omit it for a card-management-only link
+// POST { email, minutes?, amount?, reference?, invoiceNumber?, items? }
+//      -> { url, expiresAt, amount }
+//   Pass invoiceNumber + items to snapshot an itemized request.
 // GET  ?email=...  -> { cards }   staff view of cards on file
 // GET  (no email)  -> { links }   recently issued links
 
@@ -14,7 +15,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req) {
   try {
-    const { email, minutes, amount, reference } = await req.json();
+    const { email, minutes, amount, reference, invoiceNumber, items } = await req.json();
     const clean = String(email || "").trim().toLowerCase();
     if (!clean || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(clean))
       return Response.json({ error: "Valid email required" }, { status: 400 });
@@ -27,7 +28,8 @@ export async function POST(req) {
       pay = {
         amount: Math.round(dollars * 100),
         currency: "usd",
-        reference: reference || "Wholesale order",
+        reference: reference || (invoiceNumber ? `Invoice ${invoiceNumber}` : "Wholesale order"),
+        invoiceNumber: invoiceNumber || null,
       };
     }
 
@@ -37,7 +39,15 @@ export async function POST(req) {
     const base = (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
     const url = `${base}/account/payment-methods?token=${encodeURIComponent(token)}`;
 
-    await recordIssued(jti, clean, expiresAt, null, pay ? pay.amount : null, pay ? pay.reference : null);
+    await recordIssued({
+      jti,
+      email: clean,
+      expiresAt,
+      amountCents: pay ? pay.amount : null,
+      reference: pay ? pay.reference : null,
+      invoiceNumber: invoiceNumber || null,
+      items: Array.isArray(items) && items.length ? items : null,
+    });
 
     return Response.json({ url, expiresAt, amount: pay ? pay.amount / 100 : null });
   } catch (e) {
