@@ -108,17 +108,33 @@ export async function GET(req) {
 
       let rawItems = [];
       let matchedOn = null;
+      const attempts = [];
       for (const key of candidates) {
-        const { data } = await db()
+        const { data, error } = await db()
           .from("invoice_items")
           .select("style_number, description, color_name, size, qty, unit_price, amount")
           .eq("apparel_magic_invoice_id", key)
           .order("style_number");
+        attempts.push({ key, rows: data ? data.length : 0, error: error ? error.message : null });
         if (data && data.length) {
           rawItems = data;
           matchedOn = key;
           break;
         }
+      }
+
+      // Probe the table itself so we can tell "no match" from "cannot read"
+      let probe = null;
+      if (!rawItems.length) {
+        const { data, error } = await db()
+          .from("invoice_items")
+          .select("apparel_magic_invoice_id")
+          .limit(3);
+        probe = {
+          reachable: !error,
+          error: error ? error.message : null,
+          sampleKeys: (data || []).map((r) => JSON.stringify(r.apparel_magic_invoice_id)),
+        };
       }
 
       const imgs = await imagesForStyles((rawItems || []).map((i) => i.style_number));
@@ -136,7 +152,7 @@ export async function GET(req) {
       return Response.json({
         invoice: { ...toListItem(invoice), ...invoice },
         items,
-        debug: { triedKeys: candidates, matchedOn, itemCount: items.length },
+        debug: { triedKeys: candidates, matchedOn, itemCount: items.length, attempts, probe },
       });
     }
 
