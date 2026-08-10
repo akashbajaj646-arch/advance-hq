@@ -1,18 +1,20 @@
 // app/api/wholesale/invoices/route.js
 // INTERNAL, protected by the existing middleware session check.
 //
-// GET ?q=<invoice number, customer, or email>  -> { invoices }  picker list
-// GET ?invoice_number=<n>                      -> { invoice, items }  full detail
+// GET ?q=<invoice number, order number, or customer>  -> { invoices }
+// GET ?invoice_number=<n>                             -> { invoice, items }
 //
-// Images: invoice_items.style_number -> products -> product_images.
-// If your products table uses a different column for the style number,
-// change STYLE_COLUMN below and nothing else needs to move.
+// Search adapts to column types: it tries a partial (ilike) match and also
+// exact matching for digits, so it works whether invoice_number is text or
+// an integer. Failed variants are skipped instead of failing the request.
 
 import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 
 const STYLE_COLUMN = "style_number";
+const LIST_COLUMNS =
+  "invoice_number, customer_name, invoice_date, due_date, total_amount, balance_due, payment_status, apparel_magic_order_id";
 
 let _db = null;
 function db() {
@@ -26,12 +28,10 @@ function db() {
   return _db;
 }
 
-/** Best-effort thumbnail lookup, keyed by style number. */
 async function imagesForStyles(styles) {
   const map = {};
   const unique = [...new Set(styles.filter(Boolean))];
   if (!unique.length) return map;
-
   try {
     const { data: products } = await db()
       .from("products")
@@ -57,6 +57,19 @@ async function imagesForStyles(styles) {
   return map;
 }
 
+/** Runs a filter, returning [] instead of throwing when the column type rejects it. */
+async function tryQuery(build) {
+  try {
+    const { data, error } = await build(
+      db().from("invoices").select(LIST_COLUMNS).order("invoice_date", { ascending: false }).limit(15)
+    );
+    if (error) return [];
+    return data || [];
+  } catch {
+    return [];
+  }
+}
+
 export async function GET(req) {
   try {
     const url = new URL(req.url);
@@ -64,12 +77,13 @@ export async function GET(req) {
     const q = (url.searchParams.get("q") || "").trim();
 
     if (invoiceNumber) {
-      const { data: invoice, error } = await db()
-        .from("invoices")
-        .select("*")
-        .eq("invoice_number", invoiceNumber)
-        .maybeSingle();
-      if (error) throw error;
+      let invoice = null;
+      const asText = await db().from("invoices").select("*").eq("invoice_number", invoiceNumber).maybeSingle();
+      invoice = asText.data;
+      if (!invoice && /^\d+$/.test(invoiceNumber)) {
+        const asNum = await db().from("invoices").select("*").eq("invoice_number", Number(invoiceNumber)).maybeSingle();
+        invoice = asNum.data;
+      }
       if (!invoice) return Response.json({ error: "Invoice not found" }, { status: 404 });
 
       const { data: rawItems } = await db()
@@ -93,26 +107,44 @@ export async function GET(req) {
       return Response.json({ invoice, items });
     }
 
-    let query = db()
-      .from("invoices")
-      .select("invoice_number, customer_name, invoice_date, due_date, total_amount, balance_due, payment_status, apparel_magic_order_id")
-      .order("invoice_date", { ascending: false })
-      .limit(25);
-
-    if (q) {
-      query = query.or(
-        `invoice_number.ilike.%${q}%,customer_name.ilike.%${q}%,apparel_magic_order_id.ilike.%${q}%`
-      );
-    } else {
-      // Default view: recent invoices that still owe something
-      query = query.gt("balance_due", 0);
+    if (!q) {
+      const { data, error } = await db()
+        .from("invoices")
+        .select(LIST_COLUMNS)
+        .gt("balance_due", 0)
+        .order("invoice_date", { ascending: false })
+        .limit(15);
+      if (error) throw error;
+      return Response.json({ invoices: data || [] });
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
-    return Response.json({ invoices: data || [] });
+    const isNumeric = /^\d+$/.test(q);
+    const results = [];
+
+    results.push(...(await tryQuery((qb) => qb.ilike("invoice_number", `%${q}%`))));
+    if (isNumeric) {
+      results.push(...(await tryQuery((qb) => qb.eq("invoice_number", Number(q)))));
+      results.push(...(await tryQuery((qb) => qb.eq("apparel_magic_order_id", Number(q)))));
+    }
+    results.push(...(await tryQuery((qb) => qb.ilike("apparel_magic_order_id", `%${q}%`))));
+    results.push(...(await tryQuery((qb) => qb.ilike("customer_name", `%${q}%`))));
+
+    const seen = new Set();
+    const invoices = results
+      .filter((r) => {
+        const k = String(r.invoice_number);
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .slice(0, 25);
+
+    return Response.json({ invoices });
   } catch (e) {
     console.error("wholesale/invoices:", e);
-    return Response.json({ error: "Could not load invoices" }, { status: 500 });
+    return Response.json(
+      { error: "Could not load invoices", detail: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 }

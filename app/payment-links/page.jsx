@@ -49,8 +49,12 @@ export default function PaymentLinks() {
     const t = setTimeout(() => {
       fetch(`/api/wholesale/invoices?q=${encodeURIComponent(search)}`)
         .then((r) => r.json())
-        .then((j) => setInvoices(j.invoices || []))
-        .catch(() => {});
+        .then((j) => {
+          if (j.error) setError(j.detail || j.error);
+          else setError("");
+          setInvoices(j.invoices || []);
+        })
+        .catch(() => setError("Invoice search failed"));
     }, 250);
     return () => clearTimeout(t);
   }, [search, mode]);
