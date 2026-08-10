@@ -31,24 +31,40 @@ async function imagesForStyles(styles) {
   const unique = [...new Set(styles.filter(Boolean))];
   if (!unique.length) return map;
   try {
-    const { data: products } = await db()
+    // products keys on product_id (not id) and carries style_number
+    const { data: products, error: pErr } = await db()
       .from("products")
-      .select(`id, ${STYLE_COLUMN}`)
-      .in(STYLE_COLUMN, unique);
-    if (!products || !products.length) return map;
+      .select("product_id, style_number")
+      .in("style_number", unique);
+    if (pErr || !products || !products.length) return map;
 
-    const byId = {};
-    products.forEach((p) => { byId[p.id] = p[STYLE_COLUMN]; });
+    const styleByProductId = {};
+    products.forEach((p) => { styleByProductId[p.product_id] = p.style_number; });
+    const productIds = Object.keys(styleByProductId);
 
-    const { data: images } = await db()
+    // Primary image first, then anything else for styles that lack one
+    const { data: primary } = await db()
       .from("product_images")
       .select("product_id, image_url")
-      .in("product_id", Object.keys(byId));
+      .in("product_id", productIds)
+      .eq("sort_order", 0);
 
-    (images || []).forEach((img) => {
-      const style = byId[img.product_id];
+    (primary || []).forEach((img) => {
+      const style = styleByProductId[img.product_id];
       if (style && !map[style]) map[style] = img.image_url;
     });
+
+    const missing = productIds.filter((id) => !map[styleByProductId[id]]);
+    if (missing.length) {
+      const { data: any } = await db()
+        .from("product_images")
+        .select("product_id, image_url")
+        .in("product_id", missing);
+      (any || []).forEach((img) => {
+        const style = styleByProductId[img.product_id];
+        if (style && !map[style]) map[style] = img.image_url;
+      });
+    }
   } catch (e) {
     console.error("imagesForStyles:", e);
   }
@@ -163,7 +179,7 @@ export async function GET(req) {
       return Response.json({
         invoice: { ...toListItem(invoice), ...invoice },
         items,
-        debug: { triedKeys: candidates, matchedOn, itemCount: items.length, attempts, probe, columns: rawItems[0] ? Object.keys(rawItems[0]) : [] },
+        debug: { triedKeys: candidates, matchedOn, itemCount: items.length, attempts, probe, columns: rawItems[0] ? Object.keys(rawItems[0]) : [], imagesFound: items.filter((i) => i.imageUrl).length },
       });
     }
 
