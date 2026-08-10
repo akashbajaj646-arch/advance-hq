@@ -9,7 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0",
+    "@supabase/supabase-js": "^2.109.0",
     "exceljs": "^4.4.0",
     "jspdf": "^4.2.0",
     "jspdf-autotable": "^5.0.7",

@@ -1,94 +1,123 @@
 // app/api/account/payment-methods/route.js
-// PUBLIC route (add to middleware PUBLIC_PATHS). Auth is the signed
-// customer token, passed as ?token= or Authorization: Bearer <token>.
-// Later the Shopify customer account extension will call this same route.
+// PUBLIC route. Auth ladder:
+//   1. Valid session cookie  -> use it
+//   2. Link token in URL     -> verify, burn it, issue session cookie
+//   3. Otherwise             -> 401
 //
-// GET    -> { cards: [...] }
-// POST   -> { url } Stripe hosted portal session for adding/updating cards
-// DELETE -> { ok } detach a card, body { paymentMethodId }
+// Card removal is intentionally NOT exposed here. Customers remove cards
+// inside Stripe's own authenticated portal.
+//
+// GET  -> { email, cards }
+// POST -> { url } Stripe hosted portal session
 
 import { getStripe, resolveStripeCustomer, listCards } from "@/lib/stripe";
+import {
+  verifyLinkToken,
+  createSessionValue,
+  verifySessionValue,
+  SESSION_COOKIE,
+} from "@/lib/customerToken";
+import { consumeToken } from "@/lib/tokenStore";
 
 export const dynamic = "force-dynamic";
-import { verifyCustomerToken } from "@/lib/customerToken";
 
 const corsHeaders = () => ({
   "Access-Control-Allow-Origin": process.env.ALLOWED_ORIGIN || "*",
-  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Cache-Control": "no-store",
 });
 
 export async function OPTIONS() {
   return new Response(null, { status: 204, headers: corsHeaders() });
 }
 
-function auth(req) {
+/**
+ * Resolves the caller. Returns { email, setCookie? } or null.
+ * Burns the link token the first time it is seen.
+ */
+async function authenticate(req) {
+  const cookie = req.cookies.get(SESSION_COOKIE)?.value;
+  const fromCookie = cookie ? verifySessionValue(cookie) : null;
+  if (fromCookie) return { email: fromCookie.email };
+
   const url = new URL(req.url);
   const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
-  return verifyCustomerToken(bearer || url.searchParams.get("token"));
+  const raw = bearer || url.searchParams.get("token");
+  if (!raw) return null;
+
+  const link = verifyLinkToken(raw);
+  if (!link) return null;
+
+  const fresh = await consumeToken(link.jti, link.email);
+  if (!fresh) return null; // already opened once
+
+  return { email: link.email, setCookie: createSessionValue(link.email) };
+}
+
+function respond(body, status, session) {
+  const res = Response.json(body, { status, headers: corsHeaders() });
+  if (session?.setCookie) {
+    res.headers.append(
+      "Set-Cookie",
+      `${SESSION_COOKIE}=${session.setCookie.value}; Path=/; Max-Age=${session.setCookie.maxAge}; HttpOnly; Secure; SameSite=Lax`
+    );
+  }
+  return res;
 }
 
 export async function GET(req) {
-  const json = (b, s = 200) => Response.json(b, { status: s, headers: corsHeaders() });
-  const session = auth(req);
-  if (!session) return json({ error: "Link expired or invalid" }, 401);
+  let session;
+  try {
+    session = await authenticate(req);
+  } catch (e) {
+    console.error("account/payment-methods auth:", e);
+    return respond({ error: "Could not verify this link" }, 500);
+  }
+  if (!session)
+    return respond(
+      { error: "This link has expired or has already been used. Please ask us for a new one." },
+      401
+    );
 
   try {
     const customer = await resolveStripeCustomer(session.email);
     const cards = await listCards(customer.id);
-    return json({ email: session.email, cards });
+    return respond({ email: session.email, cards }, 200, session);
   } catch (e) {
     console.error("account/payment-methods GET:", e);
-    return json({ error: "Could not load payment methods" }, 500);
+    return respond({ error: "Could not load payment methods" }, 500, session);
   }
 }
 
 export async function POST(req) {
-  const json = (b, s = 200) => Response.json(b, { status: s, headers: corsHeaders() });
-  const session = auth(req);
-  if (!session) return json({ error: "Link expired or invalid" }, 401);
+  let session;
+  try {
+    session = await authenticate(req);
+  } catch (e) {
+    console.error("account/payment-methods auth:", e);
+    return respond({ error: "Could not verify this link" }, 500);
+  }
+  if (!session)
+    return respond(
+      { error: "This link has expired or has already been used. Please ask us for a new one." },
+      401
+    );
 
   try {
-    const body = await req.json().catch(() => ({}));
     const customer = await resolveStripeCustomer(session.email);
-    const returnUrl =
-      body.returnUrl ||
-      `${process.env.NEXT_PUBLIC_APP_URL || ""}/account/payment-methods?token=${encodeURIComponent(
-        new URL(req.url).searchParams.get("token") || ""
-      )}`;
-
+    const base = process.env.NEXT_PUBLIC_APP_URL || "";
     const portal = await getStripe().billingPortal.sessions.create({
       customer: customer.id,
-      return_url: returnUrl,
+      return_url: `${base}/account/payment-methods`,
     });
-    return json({ url: portal.url });
+    return respond({ url: portal.url }, 200, session);
   } catch (e) {
     console.error("account/payment-methods POST:", e);
-    return json(
+    return respond(
       { error: "Could not open the card manager. Please contact us and we'll help." },
-      500
+      500,
+      session
     );
-  }
-}
-
-export async function DELETE(req) {
-  const json = (b, s = 200) => Response.json(b, { status: s, headers: corsHeaders() });
-  const session = auth(req);
-  if (!session) return json({ error: "Link expired or invalid" }, 401);
-
-  try {
-    const { paymentMethodId } = await req.json();
-    if (!paymentMethodId) return json({ error: "paymentMethodId required" }, 400);
-
-    // Confirm the card belongs to this customer before detaching
-    const customer = await resolveStripeCustomer(session.email);
-    const pm = await getStripe().paymentMethods.retrieve(paymentMethodId);
-    if (pm.customer !== customer.id) return json({ error: "Not found" }, 404);
-
-    await getStripe().paymentMethods.detach(paymentMethodId);
-    return json({ ok: true });
-  } catch (e) {
-    console.error("account/payment-methods DELETE:", e);
-    return json({ error: "Could not remove that card" }, 500);
   }
 }
