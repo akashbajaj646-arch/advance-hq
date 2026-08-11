@@ -1,12 +1,14 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { hasModuleAccess } from '@/lib/modules';
 
 interface User {
   id: string;
   email: string;
   full_name: string;
   role: string;
+  permissions?: string[] | null; // null = all modules
 }
 
 interface AuthContextType {
@@ -14,6 +16,8 @@ interface AuthContextType {
   loading: boolean;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
+  /** True if the current user can access the given module key (see lib/modules.ts) */
+  canAccess: (moduleKey: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -21,6 +25,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   logout: async () => {},
   refresh: async () => {},
+  canAccess: () => false,
 });
 
 export function useAuth() {
@@ -53,12 +58,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.location.href = '/login';
   }, []);
 
+  const canAccess = useCallback(
+    (moduleKey: string) => hasModuleAccess(user, moduleKey),
+    [user]
+  );
+
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   return (
-    <AuthContext.Provider value={{ user, loading, logout, refresh }}>
+    <AuthContext.Provider value={{ user, loading, logout, refresh, canAccess }}>
       {children}
     </AuthContext.Provider>
   );

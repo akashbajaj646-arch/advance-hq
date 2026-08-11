@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import TicketBadge from '@/components/TicketBadge';
+import { useAuth } from '@/context/AuthContext';
+import { hasModuleAccess } from '@/lib/modules';
 
 type NavItem = {
   key: string;
@@ -15,6 +17,7 @@ type NavItem = {
 // Canonical menu. Order here is the DEFAULT; users can reorder and we persist it.
 // To add a menu item in future, just add an entry — it auto-appends to the end of
 // any saved custom order (see mergeOrder below).
+// NOTE: `key` doubles as the module-permission key — keep in sync with lib/modules.ts.
 const NAV_ITEMS: NavItem[] = [
   { key: 'dashboard', label: 'Dashboard', href: '/', paths: ['M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z'] },
   { key: 'products', label: 'Products', href: '/products', paths: ['M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z'] },
@@ -61,6 +64,7 @@ function Icon({ paths }: { paths: string[] }) {
 }
 
 export default function SidebarNav() {
+  const { user, loading } = useAuth();
   const [order, setOrder] = useState<string[]>(DEFAULT_ORDER);
   const [editMode, setEditMode] = useState(false);
   const orderRef = useRef<string[]>(DEFAULT_ORDER);
@@ -101,6 +105,17 @@ export default function SidebarNav() {
     setOrder(DEFAULT_ORDER);
   }
 
+  // Wait for auth so restricted users never see a flash of the full menu.
+  if (loading) {
+    return <nav className="flex-1 p-4 space-y-1 overflow-y-auto" />;
+  }
+
+  // Only render modules this user can access (admins / legacy users see everything).
+  const visibleOrder = order.filter(key => {
+    const item = ITEM_BY_KEY[key];
+    return !!item && hasModuleAccess(user, key);
+  });
+
   return (
     <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
       <div className="flex items-center justify-between px-1 pb-2">
@@ -120,7 +135,7 @@ export default function SidebarNav() {
         )}
       </div>
 
-      {order.map(key => {
+      {visibleOrder.map(key => {
         const item = ITEM_BY_KEY[key];
         if (!item) return null;
 

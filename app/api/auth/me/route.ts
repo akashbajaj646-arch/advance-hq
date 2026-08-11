@@ -5,18 +5,21 @@ export async function GET() {
   try {
     const result = await getSession();
     if (!result) {
-      return NextResponse.json({ authenticated: false }, { status: 401 });
+      return NextResponse.json({ user: null }, { status: 401 });
     }
+
+    const u = result.user;
     return NextResponse.json({
-      authenticated: true,
       user: {
-        id: result.user.id,
-        email: result.user.email,
-        full_name: result.user.full_name,
-        role: result.user.role,
+        id: u.id,
+        email: u.email,
+        full_name: u.full_name,
+        role: u.role,
+        permissions: u.permissions ?? null,
       },
     });
   } catch (error) {
-    return NextResponse.json({ authenticated: false }, { status: 401 });
+    console.error('Me error:', error);
+    return NextResponse.json({ user: null }, { status: 500 });
   }
 }

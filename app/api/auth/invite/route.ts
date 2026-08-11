@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { getSession } from '@/lib/auth';
+import { SELECTABLE_MODULES } from '@/lib/modules';
+
+const VALID_MODULE_KEYS = new Set(SELECTABLE_MODULES.map(m => m.key));
 
 export async function POST(request: Request) {
   try {
@@ -9,11 +12,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
     }
 
-    const { email, role = 'viewer' } = await request.json();
+    const { email, role = 'viewer', permissions = null } = await request.json();
 
     if (!email) {
       return NextResponse.json({ error: 'Email is required' }, { status: 400 });
     }
+
+    // Validate permissions: null = all modules; otherwise a non-empty array of known module keys
+    let cleanPermissions: string[] | null = null;
+    if (permissions !== null && permissions !== undefined) {
+      if (!Array.isArray(permissions) || permissions.some(p => typeof p !== 'string' || !VALID_MODULE_KEYS.has(p))) {
+        return NextResponse.json({ error: 'Invalid permissions list' }, { status: 400 });
+      }
+      if (permissions.length === 0) {
+        return NextResponse.json({ error: 'Select at least one module, or grant all modules' }, { status: 400 });
+      }
+      cleanPermissions = permissions;
+    }
+
+    // Admins always get everything; don't store a misleading allowlist
+    if (role === 'admin') cleanPermissions = null;
 
     // Check if user already exists
     const { data: existing } = await supabaseAdmin
@@ -50,12 +68,14 @@ export async function POST(request: Request) {
         token,
         invited_by: result.user.id,
         role,
+        permissions: cleanPermissions,
         expires_at: expiresAt.toISOString(),
       })
       .select()
       .single();
 
     if (error) {
+      console.error('Invite insert error:', error);
       return NextResponse.json({ error: 'Failed to create invite' }, { status: 500 });
     }
 
@@ -64,7 +84,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      invite: { id: invite.id, email: invite.email, role, expires_at: invite.expires_at },
+      invite: { id: invite.id, email: invite.email, role, permissions: cleanPermissions, expires_at: invite.expires_at },
       invite_link: inviteLink,
     });
   } catch (error) {

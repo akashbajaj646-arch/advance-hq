@@ -38,7 +38,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Account already exists. Please log in.' }, { status: 400 });
     }
 
-    // Create user
+    // Create user (permissions copied from the invite; null = all modules)
     const passwordHash = await hashPassword(password);
     const { data: user, error } = await supabaseAdmin
       .from('hq_users')
@@ -47,6 +47,7 @@ export async function POST(request: Request) {
         password_hash: passwordHash,
         full_name: full_name || invite.email.split('@')[0],
         role: invite.role,
+        permissions: invite.permissions ?? null,
         invited_by: invite.invited_by,
         invited_at: invite.created_at,
       })

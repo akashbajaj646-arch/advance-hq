@@ -204,3 +204,11 @@ Synced from AM into `purchase_orders` (header) + `purchase_order_items`, keyed o
 - Tailwind for styling; no CSS modules. Brand color is `brand-600`.
 - Don't commit `.backup-*` files — `.gitignore` covers them, and they're produced by install scripts. The repo currently has stale `.backup-*` artifacts at the root that should not be touched.
 - Supabase migrations live in `supabase/migrations/` as plain SQL files dated `YYYYMMDD_*.sql`. They're applied by hand in the Supabase SQL editor — there's no migration runner here. Make them idempotent (use `if not exists`, `on conflict`, etc.) so re-running is safe.
+
+## Module permissions (2026-08-11)
+- `hq_users.permissions` / `hq_invites.permissions` (jsonb): NULL = all modules; array of module keys = allowlist. Admins always bypass.
+- Canonical module registry: `lib/modules.ts` — keys MUST match NAV_ITEMS keys in `components/SidebarNav.tsx`. New modules: add to both.
+- Enforced in 3 layers: SidebarNav (hides items), middleware (page redirect to `/` + API 403 via edge-safe Supabase REST session lookup), invite/signup flow (permissions copied invite → user).
+- Dashboard + Settings are always accessible (`selectable: false`). Middleware fails OPEN on Supabase infra errors (won't lock the app on a blip).
+- API enforcement currently maps `/api/warehouse` → warehouse and `/api/data` → samples; add `apiPrefixes` in lib/modules.ts as new module APIs land.
+- KNOWN GAP: client pages using `lib/db` (anon key) query Supabase directly — module blocking is at page/API level, not data level. Data-level RLS is a deferred item.
