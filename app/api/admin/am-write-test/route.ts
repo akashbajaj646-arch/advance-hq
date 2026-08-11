@@ -2,39 +2,41 @@ import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ApparelMagic WRITE TEST harness (temporary diagnostics — remove after Approve→AM ships)
+// ApparelMagic WRITE TEST harness v2 (temporary diagnostics)
 //
-// Drive it entirely from the browser while logged in as an Advance HQ admin:
+// v1 result: GET works; PUT (json + form, auth in query) → 401 Apache HTML page
+// served from port 80, i.e. the request likely never reached AM's app auth.
 //
-//   READ ONLY (safe, no changes):
-//     /api/admin/am-write-test?product_id=2213
+// v2 probes a matrix of variants and stops at the first one that works:
+//   methods:  PUT, POST, PATCH
+//   body:     JSON vs form-encoded
+//   auth:     time/token in query string vs inside the body
+// All requests use redirect:'manual' so any Location header is captured —
+// if a redirect is eating the write, we'll see exactly where it points.
 //
-//   PERFORM THE WRITE TEST (PUTs a description, then re-reads to verify):
-//     /api/admin/am-write-test?product_id=2213&write=API write test via Advance HQ
-//
-// It tries a JSON-body PUT first; if AM rejects that, it retries form-encoded.
-// Every attempt's status + raw response is returned so we learn the exact
-// payload shape AM expects. Only the `description` field is ever written.
+// Usage (logged in as Advance HQ admin):
+//   Read only:  /api/admin/am-write-test?product_id=2213
+//   Write test: /api/admin/am-write-test?product_id=2213&write=SOME TEXT
+// Only the `description` field is ever written.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TOKEN = process.env.APPARELMAGIC_TOKEN || '';
 const BASE_URL = process.env.NEXT_PUBLIC_APPARELMAGIC_URL || 'https://advanceapparels.app.apparelmagic.com/api/json';
 
-function authQS(extra: Record<string, string> = {}) {
-  return new URLSearchParams({
-    time: Math.floor(Date.now() / 1000).toString(),
-    token: TOKEN,
-    ...extra,
-  }).toString();
+function authPair() {
+  return { time: Math.floor(Date.now() / 1000).toString(), token: TOKEN };
+}
+
+function redact(s: string) {
+  return TOKEN ? s.split(TOKEN).join('TOKEN_REDACTED') : s;
 }
 
 async function parseBody(res: Response): Promise<any> {
   const text = await res.text();
-  try { return JSON.parse(text); } catch { return { _raw_text: text.slice(0, 2000) }; }
+  try { return JSON.parse(text); } catch { return { _raw_text: text.slice(0, 600) }; }
 }
 
 function extractProduct(body: any, productId: string): any | null {
-  // AM usually wraps results as { response: [...] }
   const list = Array.isArray(body?.response) ? body.response
     : Array.isArray(body) ? body
     : body?.response ? [body.response]
@@ -44,91 +46,72 @@ function extractProduct(body: any, productId: string): any | null {
   return list.find((p: any) => String(p.product_id) === String(productId)) ?? list[0];
 }
 
-async function getProduct(productId: string): Promise<{ status: number; url: string; product: any | null; raw: any }> {
-  // Try REST-style single fetch first
-  let url = `${BASE_URL}/products/${encodeURIComponent(productId)}?${authQS()}`;
-  let res = await fetch(url, { headers: { 'User-Agent': 'AdvanceHQ/1.0' } });
+async function getProduct(productId: string): Promise<{ status: number; product: any | null; raw?: any }> {
+  const auth = authPair();
+  let qs = new URLSearchParams(auth).toString();
+  let res = await fetch(`${BASE_URL}/products/${encodeURIComponent(productId)}?${qs}`, { headers: { 'User-Agent': 'AdvanceHQ/1.0' } });
   let body = await parseBody(res);
   let product = res.ok ? extractProduct(body, productId) : null;
 
-  // Fallback: filtered list fetch
   if (!product) {
-    url = `${BASE_URL}/products?${authQS({ product_id: String(productId), 'pagination[page_size]': '5' })}`;
-    res = await fetch(url, { headers: { 'User-Agent': 'AdvanceHQ/1.0' } });
+    qs = new URLSearchParams({ ...auth, product_id: String(productId), 'pagination[page_size]': '5' }).toString();
+    res = await fetch(`${BASE_URL}/products?${qs}`, { headers: { 'User-Agent': 'AdvanceHQ/1.0' } });
     body = await parseBody(res);
     product = res.ok ? extractProduct(body, productId) : null;
   }
-
-  return { status: res.status, url: url.replace(TOKEN, 'TOKEN_REDACTED'), product, raw: product ? undefined : body };
+  return { status: res.status, product, raw: product ? undefined : body };
 }
 
 type Attempt = {
   label: string;
   method: string;
   url: string;
+  content_type: string;
   request_body: string;
   status: number;
-  ok: boolean;
+  location_header: string | null;
+  looks_ok: boolean;
   response: any;
 };
 
-async function attemptPut(productId: string, description: string): Promise<Attempt[]> {
-  const attempts: Attempt[] = [];
+async function tryVariant(opts: {
+  label: string;
+  method: 'PUT' | 'POST' | 'PATCH';
+  url: string;
+  contentType: 'application/json' | 'application/x-www-form-urlencoded';
+  bodyObj: Record<string, string>;
+}): Promise<Attempt> {
+  const bodyStr = opts.contentType === 'application/json'
+    ? JSON.stringify(opts.bodyObj)
+    : new URLSearchParams(opts.bodyObj).toString();
 
-  // Attempt 1: PUT with JSON body
-  {
-    const url = `${BASE_URL}/products/${encodeURIComponent(productId)}?${authQS()}`;
-    const reqBody = JSON.stringify({ description });
-    const res = await fetch(url, {
-      method: 'PUT',
-      headers: { 'User-Agent': 'AdvanceHQ/1.0', 'Content-Type': 'application/json' },
-      body: reqBody,
-    });
-    const body = await parseBody(res);
-    attempts.push({
-      label: 'PUT json body',
-      method: 'PUT',
-      url: url.replace(TOKEN, 'TOKEN_REDACTED'),
-      request_body: reqBody,
-      status: res.status,
-      ok: res.ok && !body?.error,
-      response: body,
-    });
-    if (attempts[0].ok) return attempts;
-  }
+  const res = await fetch(opts.url, {
+    method: opts.method,
+    headers: { 'User-Agent': 'AdvanceHQ/1.0', 'Content-Type': opts.contentType, 'Accept': 'application/json' },
+    body: bodyStr,
+    redirect: 'manual',
+  });
+  const body = await parseBody(res);
 
-  // Attempt 2: PUT with form-encoded body
-  {
-    const url = `${BASE_URL}/products/${encodeURIComponent(productId)}?${authQS()}`;
-    const form = new URLSearchParams({ description });
-    const res = await fetch(url, {
-      method: 'PUT',
-      headers: { 'User-Agent': 'AdvanceHQ/1.0', 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: form.toString(),
-    });
-    const body = await parseBody(res);
-    attempts.push({
-      label: 'PUT form-encoded body',
-      method: 'PUT',
-      url: url.replace(TOKEN, 'TOKEN_REDACTED'),
-      request_body: form.toString(),
-      status: res.status,
-      ok: res.ok && !body?.error,
-      response: body,
-    });
-  }
-
-  return attempts;
+  return {
+    label: opts.label,
+    method: opts.method,
+    url: redact(opts.url),
+    content_type: opts.contentType,
+    request_body: redact(bodyStr),
+    status: res.status,
+    location_header: res.headers.get('location'),
+    looks_ok: res.ok && !body?.error && !body?._raw_text,
+    response: body,
+  };
 }
 
 export async function GET(request: Request) {
   try {
-    // Admin session required — this route can WRITE to ApparelMagic.
     const session = await getSession();
     if (!session || session.user.role !== 'admin') {
       return NextResponse.json({ error: 'Admin access required. Log in to Advance HQ first, then open this URL in the same browser.' }, { status: 403 });
     }
-
     if (!TOKEN) {
       return NextResponse.json({ error: 'APPARELMAGIC_TOKEN env var is not set' }, { status: 500 });
     }
@@ -137,58 +120,73 @@ export async function GET(request: Request) {
     const productId = searchParams.get('product_id') || '2213';
     const write = searchParams.get('write');
 
-    // ── BEFORE ──
     const before = await getProduct(productId);
     if (!before.product) {
-      return NextResponse.json({
-        mode: 'read-only',
-        error: `Could not fetch product ${productId} from ApparelMagic`,
-        fetch_status: before.status,
-        fetch_url: before.url,
-        raw: before.raw,
-      }, { status: 502 });
+      return NextResponse.json({ mode: 'read-only', error: `Could not fetch product ${productId}`, fetch_status: before.status, raw: before.raw }, { status: 502 });
     }
-
-    const summary = {
-      product_id: before.product.product_id,
-      style_number: before.product.style_number,
-      description: before.product.description ?? null,
-      category: before.product.category ?? null,
-      price: before.product.price ?? null,
-    };
 
     if (!write) {
       return NextResponse.json({
         mode: 'read-only',
-        note: `No changes made. To run the write test, append &write=YOUR TEST DESCRIPTION to this URL.`,
-        summary,
-        full_product_record: before.product,
+        note: 'No changes made. Append &write=YOUR TEST DESCRIPTION to run the write probe.',
+        summary: {
+          product_id: before.product.product_id,
+          style_number: before.product.style_number,
+          description: before.product.description ?? null,
+        },
       });
     }
 
-    // ── WRITE ──
-    const attempts = await attemptPut(productId, write);
+    const auth = authPair();
+    const qsAuth = new URLSearchParams(auth).toString();
+    const singleUrl = `${BASE_URL}/products/${encodeURIComponent(productId)}`;
+    const collectionUrl = `${BASE_URL}/products`;
 
-    // ── AFTER (verify) ──
+    // Probe matrix — ordered by likelihood. Stops at the first variant that looks_ok AND verifies.
+    const variants: Parameters<typeof tryVariant>[0][] = [
+      { label: 'PUT /products/{id}, json body, auth in query',        method: 'PUT',   url: `${singleUrl}?${qsAuth}`, contentType: 'application/json',                  bodyObj: { description: write } },
+      { label: 'POST /products/{id}, json body, auth in query',       method: 'POST',  url: `${singleUrl}?${qsAuth}`, contentType: 'application/json',                  bodyObj: { description: write } },
+      { label: 'PUT /products/{id}, form body, auth IN BODY',         method: 'PUT',   url: singleUrl,                contentType: 'application/x-www-form-urlencoded', bodyObj: { ...auth, description: write } },
+      { label: 'POST /products/{id}, form body, auth IN BODY',        method: 'POST',  url: singleUrl,                contentType: 'application/x-www-form-urlencoded', bodyObj: { ...auth, description: write } },
+      { label: 'POST /products/{id}, json body, auth IN BODY',        method: 'POST',  url: singleUrl,                contentType: 'application/json',                  bodyObj: { ...auth, description: write } },
+      { label: 'PATCH /products/{id}, json body, auth in query',      method: 'PATCH', url: `${singleUrl}?${qsAuth}`, contentType: 'application/json',                  bodyObj: { description: write } },
+      { label: 'POST /products (collection) w/ product_id, auth in body', method: 'POST', url: collectionUrl,        contentType: 'application/x-www-form-urlencoded', bodyObj: { ...auth, product_id: String(productId), description: write } },
+    ];
+
+    const attempts: Attempt[] = [];
+    let winner: Attempt | null = null;
+
+    for (const v of variants) {
+      const attempt = await tryVariant(v);
+      attempts.push(attempt);
+      if (attempt.looks_ok) {
+        const check = await getProduct(productId);
+        if ((check.product?.description ?? null) === write) {
+          winner = attempt;
+          break;
+        }
+      }
+    }
+
     const after = await getProduct(productId);
     const afterDescription = after.product?.description ?? null;
     const verified = afterDescription === write;
 
     return NextResponse.json({
-      mode: 'write-test',
+      mode: 'write-test-v2',
       product_id: productId,
-      description_before: summary.description,
+      description_before: before.product.description ?? null,
       description_written: write,
       description_after: afterDescription,
       WRITE_VERIFIED: verified,
+      winning_variant: winner?.label ?? null,
       conclusion: verified
-        ? '✅ ApparelMagic REST API accepts product writes with this token. The Approve → AM push can be built on this.'
-        : '❌ The write did not stick. Check the attempts below for the status/error AM returned.',
+        ? `✅ Writes work via: ${winner?.label}. Build the write client on this exact shape.`
+        : '❌ No variant succeeded. See attempts[] — identical 401s across all variants means the token/account lacks write permission (reply to AM ticket 139923); differing statuses or Location headers point to the mechanical fix.',
       attempts,
-      full_product_record_after: after.product ?? after.raw,
     });
   } catch (error: any) {
-    console.error('AM write test error:', error);
+    console.error('AM write test v2 error:', error);
     return NextResponse.json({ error: 'Internal error', detail: String(error?.message || error) }, { status: 500 });
   }
 }
