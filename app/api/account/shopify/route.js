@@ -95,12 +95,21 @@ async function resolveLink(customerGid) {
   const email = (data?.customer?.email || "").trim().toLowerCase();
   if (!email) return null;
 
-  const { data: byEmail } = await db()
+  // Several HQ customer records can share an email, so take the most
+  // recently linked rather than failing on multiple matches.
+  const { data: matches } = await db()
     .from("stripe_links")
     .select("hq_customer_id, stripe_customer_id")
     .eq("matched_email", email)
-    .maybeSingle();
-  if (!byEmail) return null;
+    .order("linked_at", { ascending: false })
+    .limit(5);
+  if (!matches || !matches.length) return null;
+
+  const distinct = [...new Set(matches.map((m) => m.stripe_customer_id))];
+  if (distinct.length > 1) {
+    console.warn("email maps to multiple Stripe customers:", email, distinct);
+  }
+  const byEmail = matches[0];
 
   await db()
     .from("stripe_links")
