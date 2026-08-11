@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { db } from '@/lib/db';
+import StripeCustomerPanel from '@/components/StripeCustomerPanel';
 
 export default function CustomerDetailPage() {
   const params = useParams();
@@ -20,7 +21,7 @@ export default function CustomerDetailPage() {
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [activityLoading, setActivityLoading] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'orders' | 'invoices' | 'shipments' | 'activity' | 'pick-tickets' | 'payments'>('orders');
+  const [tab, setTab] = useState<'orders' | 'invoices' | 'shipments' | 'activity' | 'pick-tickets' | 'payments' | 'stripe'>('orders');
 
   useEffect(() => { loadCustomer(); }, [id]);
 
@@ -89,6 +90,7 @@ export default function CustomerDetailPage() {
     { key: 'invoices' as const, label: 'Invoices', count: invoices.length },
     { key: 'shipments' as const, label: 'Shipments', count: shipments.length },
     { key: 'pick-tickets' as const, label: 'Pick Tickets', count: pickTickets.length },
+    { key: 'stripe' as const, label: 'Stripe', count: undefined },
     { key: 'activity' as const, label: 'Activity' },
     { key: 'payments' as const, label: 'Payments', count: customerPayments.length },
   ];
@@ -295,6 +297,15 @@ export default function CustomerDetailPage() {
                 </tbody>
               </table>
             )}
+          </div>
+        )}
+
+        {tab === 'stripe' && (
+          <div className="p-4">
+            <StripeCustomerPanel
+              hqCustomerId={customer.am_customer_id ?? customer.apparel_magic_customer_id}
+              email={customer.email}
+            />
           </div>
         )}
 
