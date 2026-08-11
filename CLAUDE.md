@@ -212,3 +212,12 @@ Synced from AM into `purchase_orders` (header) + `purchase_order_items`, keyed o
 - Dashboard + Settings are always accessible (`selectable: false`). Middleware fails OPEN on Supabase infra errors (won't lock the app on a blip).
 - API enforcement currently maps `/api/warehouse` → warehouse and `/api/data` → samples; add `apiPrefixes` in lib/modules.ts as new module APIs land.
 - KNOWN GAP: client pages using `lib/db` (anon key) query Supabase directly — module blocking is at page/API level, not data level. Data-level RLS is a deferred item.
+
+## ApparelMagic WRITE API — proven shape (2026-08-11, write-test v2 vs product 2213)
+- **Writes REQUIRE auth (`time`,`token`) form-encoded IN THE BODY.** Query-string auth (fine for GETs) → 401 Apache HTML page on PUT/POST. This is the #1 AM write gotcha.
+- Update: `PUT /api/json/{entity}/{id}`, Create: `POST /api/json/{entity}`, both `application/x-www-form-urlencoded`.
+- Success responses return the full updated record in `response[0]` + empty `meta.errors` — free verification, no follow-up GET needed.
+- Use `lib/apparelmagic.ts` (`amGet`/`amUpdate`/`amCreate`) for ALL AM writes; never hand-roll the request shape.
+- Existing `APPARELMAGIC_TOKEN` has write access confirmed. TODO before production writes: mint a token under the dedicated service user for audit-trail separation.
+- Products have BOTH `description` (internal, was empty) and `web_title`/`web_description` (e-commerce copy) — description tools should consider both.
+- Temporary diagnostics endpoint `app/api/admin/am-write-test/route.ts` — remove once the first real write feature ships.
