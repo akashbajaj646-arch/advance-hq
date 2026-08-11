@@ -3,8 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import TicketBadge from '@/components/TicketBadge';
-import { useAuth } from '@/context/AuthContext';
-import { hasModuleAccess } from '@/lib/modules';
+import { hasModuleAccess, type AppUser } from '@/lib/modules';
 
 type NavItem = {
   key: string;
@@ -64,7 +63,19 @@ function Icon({ paths }: { paths: string[] }) {
 }
 
 export default function SidebarNav() {
-  const { user, loading } = useAuth();
+  // Fetch the user directly (no context dependency — sidebar may sit outside AuthProvider).
+  // 'loading' -> brief blank; null (error/no session) -> FAIL OPEN and show the full menu,
+  // because the middleware is the real enforcement layer; hiding items is cosmetic.
+  const [me, setMe] = useState<AppUser | null | 'loading'>('loading');
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/auth/me')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (alive) setMe(d?.user ?? null); })
+      .catch(() => { if (alive) setMe(null); });
+    return () => { alive = false; };
+  }, []);
+
   const [order, setOrder] = useState<string[]>(DEFAULT_ORDER);
   const [editMode, setEditMode] = useState(false);
   const orderRef = useRef<string[]>(DEFAULT_ORDER);
@@ -105,15 +116,18 @@ export default function SidebarNav() {
     setOrder(DEFAULT_ORDER);
   }
 
-  // Wait for auth so restricted users never see a flash of the full menu.
-  if (loading) {
+  // Brief blank while the user loads so restricted users never see a flash of the full menu.
+  if (me === 'loading') {
     return <nav className="flex-1 p-4 space-y-1 overflow-y-auto" />;
   }
 
-  // Only render modules this user can access (admins / legacy users see everything).
+  // Only render modules this user can access. If the fetch failed (me === null),
+  // show everything — the middleware still blocks any module they can't access.
   const visibleOrder = order.filter(key => {
     const item = ITEM_BY_KEY[key];
-    return !!item && hasModuleAccess(user, key);
+    if (!item) return false;
+    if (me === null) return true;
+    return hasModuleAccess(me, key);
   });
 
   return (
