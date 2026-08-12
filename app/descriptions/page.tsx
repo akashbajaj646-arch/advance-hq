@@ -66,6 +66,7 @@ export default function DescriptionsPage() {
 
   // Style rules + examples state
   const [sBan, setSBan] = useState(true);
+  const [sFacts, setSFacts] = useState(true);
   const [sRules, setSRules] = useState<string[]>([]);
   const [sNewRule, setSNewRule] = useState('');
   const [sExamples, setSExamples] = useState<{ title: string; body: string }[]>(
@@ -97,6 +98,7 @@ export default function DescriptionsPage() {
     setGCategories(data.categories || []);
     const st = await sRes.json();
     setSBan(st.ban_em_dashes !== false);
+    setSFacts(st.quick_facts_enabled !== false);
     setSRules(Array.isArray(st.rules) ? st.rules : []);
     const ex = Array.isArray(st.examples) ? st.examples : [];
     setSExamples(Array.from({ length: 5 }, (_, i) => ex[i] ? { title: ex[i].title || '', body: ex[i].body || '' } : { title: '', body: '' }));
@@ -368,6 +370,15 @@ export default function DescriptionsPage() {
                 className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
               />
               Ban em dashes (hard-enforced: stripped automatically everywhere)
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer mb-4">
+              <input
+                type="checkbox"
+                checked={sFacts}
+                onChange={e => { setSFacts(e.target.checked); saveSettings({ quick_facts_enabled: e.target.checked }); }}
+                className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+              />
+              Append quick-facts block to every web description (sizing, fabric, made-in, colors; re-added at push if edited out)
             </label>
             <div className="space-y-2 mb-3">
               {sRules.map((rule, i) => (

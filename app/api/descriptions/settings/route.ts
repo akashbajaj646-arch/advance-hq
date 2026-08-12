@@ -36,6 +36,10 @@ export async function POST(request: Request) {
       writes.push({ key: 'ban_em_dashes', value: !!body.ban_em_dashes });
     }
 
+    if ('quick_facts_enabled' in body) {
+      writes.push({ key: 'quick_facts_enabled', value: !!body.quick_facts_enabled });
+    }
+
     if ('rules' in body) {
       if (!Array.isArray(body.rules) || body.rules.some((r: any) => typeof r !== 'string')) {
         return NextResponse.json({ error: 'rules must be an array of strings' }, { status: 400 });

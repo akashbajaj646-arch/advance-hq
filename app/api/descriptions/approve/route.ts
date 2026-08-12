@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { getSession } from '@/lib/auth';
 import { amUpdate } from '@/lib/apparelmagic';
-import { loadCopySettings, sanitizeCopy } from '@/lib/copy-rules';
+import { loadCopySettings, sanitizeCopy, cleanQuickFacts, ensureQuickFacts } from '@/lib/copy-rules';
 
 // POST /api/descriptions/approve  { product_id }
 // Pushes the drafted copy to ApparelMagic (description, web_title, web_description)
@@ -30,11 +30,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Drafts are incomplete — web title and web description are required before pushing' }, { status: 400 });
     }
 
-    // Final hard-rule gate: nothing banned can reach AM, even via manual edits
+    // Final hard-rule gate: nothing banned can reach AM, even via manual edits,
+    // and the quick-facts block is guaranteed present when enabled.
     const settings = await loadCopySettings();
+    let webDescription = sanitizeCopy(row.draft_web_description, settings);
+    if (settings.quick_facts_enabled) {
+      const facts = cleanQuickFacts(row.quick_facts).map((f: string) => sanitizeCopy(f, settings));
+      webDescription = ensureQuickFacts(webDescription, facts);
+    }
     const fields: Record<string, any> = {
       web_title: sanitizeCopy(row.draft_web_title, settings),
-      web_description: sanitizeCopy(row.draft_web_description, settings),
+      web_description: webDescription,
     };
     if (row.draft_description) fields.description = sanitizeCopy(row.draft_description, settings);
 

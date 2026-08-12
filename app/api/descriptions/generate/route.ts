@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { getSession } from '@/lib/auth';
 import { amGet } from '@/lib/apparelmagic';
-import { loadCopySettings, sanitizeCopy } from '@/lib/copy-rules';
+import { loadCopySettings, sanitizeCopy, cleanQuickFacts, ensureQuickFacts } from '@/lib/copy-rules';
 
 // POST /api/descriptions/generate  { product_id, keywords? }
 // Generates draft copy for ONE product (the UI loops over a selected batch).
@@ -124,10 +124,11 @@ RULES:
 - Fabric, sizing, care, and spec facts above are CONTEXT. Do not automatically list them in the copy — include them only when the brand voice guidelines, category rules, or user keywords call for them. Never write anything that contradicts these facts.
 - "description": maximum 5 words, a plain general concept of the garment (e.g. "Traditional Print Dashiki Kaftan").
 - "web_title": a concise, shopper-friendly product title for the web store.
-- "web_description": the main selling description for the web store.
+- "web_description": the main selling description PROSE ONLY. Do NOT put the quick facts inside it; they are appended separately.
+- "quick_facts": 3 to 6 very short lines (each under 7 words, no ending punctuation) of quick-to-read facts, in this order when known: sizing (e.g. "One Size Fits Most" or "Available in S/M or L/XL"), fabric content (e.g. "100% Rayon", mine it from the existing copy if not in the structured fields), origin as "Made-in-X", and color availability (e.g. "Available in Assorted Colors" when multiple colorways exist). ONLY include facts that are true from the images or the facts above; omit any line you cannot verify.
 
 Respond with ONLY a JSON object, no markdown fences, no preamble:
-{"description": "...", "web_title": "...", "web_description": "..."}`;
+{"description": "...", "web_title": "...", "web_description": "...", "quick_facts": ["...", "..."]}`;
 
     const content: any[] = imageUrls.map(url => ({ type: 'image', source: { type: 'url', url } }));
     content.push({ type: 'text', text: prompt });
@@ -162,10 +163,16 @@ Respond with ONLY a JSON object, no markdown fences, no preamble:
       return NextResponse.json({ error: 'AI returned unparseable output', raw: text.slice(0, 500) }, { status: 502 });
     }
 
+    const quickFacts = cleanQuickFacts(parsed.quick_facts).map(f => sanitizeCopy(f, settings));
+    let webDescription = sanitizeCopy(String(parsed.web_description || '').trim(), settings);
+    if (settings.quick_facts_enabled) {
+      webDescription = ensureQuickFacts(webDescription, quickFacts);
+    }
+
     const drafts = {
       draft_description: sanitizeCopy(enforceFiveWords(String(parsed.description || '')), settings),
       draft_web_title: sanitizeCopy(String(parsed.web_title || '').trim(), settings),
-      draft_web_description: sanitizeCopy(String(parsed.web_description || '').trim(), settings),
+      draft_web_description: webDescription,
     };
 
     if (!drafts.draft_web_description || !drafts.draft_web_title) {
@@ -174,6 +181,7 @@ Respond with ONLY a JSON object, no markdown fences, no preamble:
 
     const { error: upErr } = await supabaseAdmin.from('product_copy').update({
       ...drafts,
+      quick_facts: quickFacts.length ? quickFacts : null,
       keywords: userKeywords || null,
       status: 'drafted',
       generated_at: new Date().toISOString(),

@@ -235,3 +235,8 @@ Synced from AM into `purchase_orders` (header) + `purchase_order_items`, keyed o
 - `lib/copy-rules.ts`: loadCopySettings + sanitizeCopy/stripEmDashes. Sanitizer runs at THREE gates: generate output, save (manual edits), approve (final, pre-AM push) — banned characters can never reach AM. Digit ranges (2–14) become hyphens; other em/en dashes become commas.
 - Rules are injected into the generation prompt as hard requirements; examples are few-shot style references (tone/structure only, never content).
 - Settings tab UI in /descriptions: Brand Voice, Style Rules, Example Descriptions, Category Rules.
+
+## Descriptions: mandatory quick-facts block (2026-08-13)
+- Every web description ends with 3-6 short fact lines (order: sizing, fabric, Made-in-X, colors). Generated as separate `quick_facts` field, stored on product_copy.quick_facts, appended below the prose.
+- Enforced at approve: if the block was edited out, it's re-appended from stored facts before the AM push. Toggle: copy_settings.quick_facts_enabled (Settings tab).
+- Facts block is plain newline-separated text. If Shopify collapses the lines in rendering, switch to HTML <ul> format (not yet built).
