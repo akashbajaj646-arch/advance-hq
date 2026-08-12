@@ -29,7 +29,7 @@ const TABS = [
   { key: 'pushed', label: 'Pushed' },
   { key: 'skipped', label: 'Skipped' },
   { key: 'ok', label: 'Has Copy' },
-  { key: 'guidelines', label: 'Guidelines' },
+  { key: 'guidelines', label: 'Settings' },
 ];
 
 function wordCount(s: string) {
@@ -64,6 +64,15 @@ export default function DescriptionsPage() {
   const [gSaving, setGSaving] = useState(false);
   const [gMsg, setGMsg] = useState('');
 
+  // Style rules + examples state
+  const [sBan, setSBan] = useState(true);
+  const [sRules, setSRules] = useState<string[]>([]);
+  const [sNewRule, setSNewRule] = useState('');
+  const [sExamples, setSExamples] = useState<{ title: string; body: string }[]>(
+    Array.from({ length: 5 }, () => ({ title: '', body: '' }))
+  );
+  const [sMsg, setSMsg] = useState('');
+
   const loadList = useCallback(async (which = tab, q = search) => {
     if (which === 'guidelines') return;
     setLoading(true);
@@ -78,11 +87,19 @@ export default function DescriptionsPage() {
   }, [tab, search]);
 
   const loadGuidelines = useCallback(async () => {
-    const res = await fetch('/api/descriptions/guidelines');
-    const data = await res.json();
+    const [gRes, sRes] = await Promise.all([
+      fetch('/api/descriptions/guidelines'),
+      fetch('/api/descriptions/settings'),
+    ]);
+    const data = await gRes.json();
     setGGlobal(data.global || '');
     setGRules(data.rules || []);
     setGCategories(data.categories || []);
+    const st = await sRes.json();
+    setSBan(st.ban_em_dashes !== false);
+    setSRules(Array.isArray(st.rules) ? st.rules : []);
+    const ex = Array.isArray(st.examples) ? st.examples : [];
+    setSExamples(Array.from({ length: 5 }, (_, i) => ex[i] ? { title: ex[i].title || '', body: ex[i].body || '' } : { title: '', body: '' }));
   }, []);
 
   useEffect(() => {
@@ -241,6 +258,27 @@ export default function DescriptionsPage() {
     }
   }
 
+  async function saveSettings(partial: any) {
+    setGSaving(true);
+    setSMsg('');
+    try {
+      const res = await fetch('/api/descriptions/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(partial),
+      });
+      if (res.ok) {
+        setSMsg('Saved.');
+        await loadGuidelines();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setSMsg(`Save failed: ${data.error || res.status}`);
+      }
+    } finally {
+      setGSaving(false);
+    }
+  }
+
   async function saveGuideline(scope: 'global' | 'category', category: string | null, guidelines: string) {
     setGSaving(true);
     setGMsg('');
@@ -317,6 +355,78 @@ export default function DescriptionsPage() {
               </button>
               {gMsg && <span className="text-sm text-gray-500">{gMsg}</span>}
             </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Style Rules</h2>
+            <p className="text-sm text-gray-400 mb-4">Hard requirements injected into every generation. The em-dash ban is also enforced server-side on every draft, edit, and push, so banned characters can never reach AM.</p>
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer mb-4">
+              <input
+                type="checkbox"
+                checked={sBan}
+                onChange={e => { setSBan(e.target.checked); saveSettings({ ban_em_dashes: e.target.checked }); }}
+                className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+              />
+              Ban em dashes (hard-enforced: stripped automatically everywhere)
+            </label>
+            <div className="space-y-2 mb-3">
+              {sRules.map((rule, i) => (
+                <div key={i} className="flex items-start gap-2 bg-gray-50 rounded-lg px-3 py-2">
+                  <span className="text-sm text-gray-700 flex-1">{rule}</span>
+                  <button
+                    onClick={() => { const next = sRules.filter((_, j) => j !== i); setSRules(next); saveSettings({ rules: next }); }}
+                    className="text-gray-300 hover:text-red-500 text-sm leading-none"
+                  >✕</button>
+                </div>
+              ))}
+              {sRules.length === 0 && <p className="text-sm text-gray-300">No rules yet.</p>}
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={sNewRule}
+                onChange={e => setSNewRule(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && sNewRule.trim()) { const next = [...sRules, sNewRule.trim()]; setSRules(next); setSNewRule(''); saveSettings({ rules: next }); } }}
+                placeholder='e.g. "Never mention price." or "Keep web titles under 8 words."'
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 outline-none"
+              />
+              <button
+                onClick={() => { if (sNewRule.trim()) { const next = [...sRules, sNewRule.trim()]; setSRules(next); setSNewRule(''); saveSettings({ rules: next }); } }}
+                disabled={gSaving || !sNewRule.trim()}
+                className="bg-brand-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
+              >Add Rule</button>
+            </div>
+            {sMsg && <p className="text-sm text-gray-500 mt-2">{sMsg}</p>}
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Example Descriptions</h2>
+            <p className="text-sm text-gray-400 mb-4">Up to 5 descriptions you love. Generation matches their tone, structure, and quality without copying their content. Paste your best existing copy here.</p>
+            <div className="space-y-4">
+              {sExamples.map((ex, i) => (
+                <div key={i} className="border border-gray-200 rounded-lg p-3">
+                  <input
+                    type="text"
+                    value={ex.title}
+                    onChange={e => setSExamples(prev => prev.map((p2, j) => j === i ? { ...p2, title: e.target.value } : p2))}
+                    placeholder={`Example ${i + 1} label (optional, e.g. "Dashiki tone reference")`}
+                    className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-sm mb-2"
+                  />
+                  <textarea
+                    value={ex.body}
+                    onChange={e => setSExamples(prev => prev.map((p2, j) => j === i ? { ...p2, body: e.target.value } : p2))}
+                    rows={3}
+                    placeholder="Paste an example description…"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                  />
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => saveSettings({ examples: sExamples.filter(e2 => e2.body.trim()) })}
+              disabled={gSaving}
+              className="mt-3 bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
+            >Save Examples</button>
           </div>
 
           <div className="bg-white rounded-xl border border-gray-200 p-6">

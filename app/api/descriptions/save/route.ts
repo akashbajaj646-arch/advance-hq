@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { getSession } from '@/lib/auth';
+import { loadCopySettings, sanitizeCopy } from '@/lib/copy-rules';
 
 // POST /api/descriptions/save  { product_id, updates: { keywords?, draft_description?, draft_web_title?, draft_web_description?, status? } }
 // Whitelisted fields only. status may only be set to 'skipped' or 'pending' (re-queue).
@@ -30,6 +31,10 @@ export async function POST(request: Request) {
       if (key in updates) {
         clean[key] = updates[key] == null ? null : String(updates[key]).trim() || null;
       }
+    }
+    const settings = await loadCopySettings();
+    for (const f of ['draft_description', 'draft_web_title', 'draft_web_description']) {
+      if (f in clean && clean[f]) clean[f] = sanitizeCopy(clean[f], settings) || null;
     }
     if ('draft_description' in clean && clean.draft_description) {
       clean.draft_description = enforceFiveWords(clean.draft_description);

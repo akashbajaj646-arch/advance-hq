@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { getSession } from '@/lib/auth';
 import { amGet } from '@/lib/apparelmagic';
+import { loadCopySettings, sanitizeCopy } from '@/lib/copy-rules';
 
 // POST /api/descriptions/generate  { product_id, keywords? }
 // Generates draft copy for ONE product (the UI loops over a selected batch).
@@ -63,6 +64,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Could not fetch product from ApparelMagic', detail: am.errors }, { status: 502 });
     }
 
+    const settings = await loadCopySettings();
+
     // Guidelines: global + this product's category
     const { data: guidelineRows } = await supabaseAdmin.from('copy_guidelines').select('*');
     const globalGuidelines = (guidelineRows || []).find(g => g.scope === 'global')?.guidelines || '';
@@ -102,9 +105,16 @@ export async function POST(request: Request) {
       userKeywords ? `MUST INCORPORATE these user-specified keywords/features: ${userKeywords}` : null,
     ].filter(Boolean).join('\n');
 
+    const styleRulesBlock = settings.rules.length
+      ? `STYLE RULES (hard requirements, never violate):\n${settings.rules.map(r => `- ${r}`).join('\n')}\n`
+      : '';
+    const examplesBlock = settings.examples.length
+      ? `EXAMPLE DESCRIPTIONS (match their tone, structure, and quality — NEVER copy their content or reuse their specific product details):\n${settings.examples.map((e, i) => `Example ${i + 1}${e.title ? ` (${e.title})` : ''}:\n${e.body}`).join('\n\n')}\n`
+      : '';
+
     const prompt = `You are writing product copy for Advance Apparels, a wholesale apparel company. Study the product images and facts, then write three fields.
 
-${globalGuidelines ? `BRAND VOICE GUIDELINES (follow these):\n${globalGuidelines}\n` : ''}${categoryGuidelines ? `CATEGORY-SPECIFIC RULES for "${product.category}":\n${categoryGuidelines}\n` : ''}
+${globalGuidelines ? `BRAND VOICE GUIDELINES (follow these):\n${globalGuidelines}\n` : ''}${styleRulesBlock}${examplesBlock}${categoryGuidelines ? `CATEGORY-SPECIFIC RULES for "${product.category}":\n${categoryGuidelines}\n` : ''}
 PRODUCT FACTS:
 ${factLines}
 
@@ -153,9 +163,9 @@ Respond with ONLY a JSON object, no markdown fences, no preamble:
     }
 
     const drafts = {
-      draft_description: enforceFiveWords(String(parsed.description || '')),
-      draft_web_title: String(parsed.web_title || '').trim(),
-      draft_web_description: String(parsed.web_description || '').trim(),
+      draft_description: sanitizeCopy(enforceFiveWords(String(parsed.description || '')), settings),
+      draft_web_title: sanitizeCopy(String(parsed.web_title || '').trim(), settings),
+      draft_web_description: sanitizeCopy(String(parsed.web_description || '').trim(), settings),
     };
 
     if (!drafts.draft_web_description || !drafts.draft_web_title) {

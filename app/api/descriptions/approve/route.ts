@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { getSession } from '@/lib/auth';
 import { amUpdate } from '@/lib/apparelmagic';
+import { loadCopySettings, sanitizeCopy } from '@/lib/copy-rules';
 
 // POST /api/descriptions/approve  { product_id }
 // Pushes the drafted copy to ApparelMagic (description, web_title, web_description)
@@ -29,11 +30,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Drafts are incomplete — web title and web description are required before pushing' }, { status: 400 });
     }
 
+    // Final hard-rule gate: nothing banned can reach AM, even via manual edits
+    const settings = await loadCopySettings();
     const fields: Record<string, any> = {
-      web_title: row.draft_web_title,
-      web_description: row.draft_web_description,
+      web_title: sanitizeCopy(row.draft_web_title, settings),
+      web_description: sanitizeCopy(row.draft_web_description, settings),
     };
-    if (row.draft_description) fields.description = row.draft_description;
+    if (row.draft_description) fields.description = sanitizeCopy(row.draft_description, settings);
 
     const result = await amUpdate('products', String(product_id), fields);
 

@@ -229,3 +229,9 @@ Synced from AM into `purchase_orders` (header) + `purchase_order_items`, keyed o
 - Generation: /api/descriptions/generate — one product per call (UI loops the batch), Anthropic Messages API with image URL blocks (up to 4 AM S3 images) + facts + guidelines + keywords. Model via DESCRIPTIONS_MODEL env (default claude-sonnet-4-6). 5-word max on `description` enforced server-side.
 - Approve = amUpdate('products', id, {description, web_title, web_description}) → AM's built-in Shopify sync carries it to the store.
 - Module key 'descriptions' registered in lib/modules.ts + SidebarNav. All mutation routes admin-only; viewing is module-gated.
+
+## Descriptions: style rules + example templates (2026-08-13)
+- `copy_settings` (key/value jsonb): `ban_em_dashes` (bool), `rules` (string[]), `examples` ({title,body}[] max 5).
+- `lib/copy-rules.ts`: loadCopySettings + sanitizeCopy/stripEmDashes. Sanitizer runs at THREE gates: generate output, save (manual edits), approve (final, pre-AM push) — banned characters can never reach AM. Digit ranges (2–14) become hyphens; other em/en dashes become commas.
+- Rules are injected into the generation prompt as hard requirements; examples are few-shot style references (tone/structure only, never content).
+- Settings tab UI in /descriptions: Brand Voice, Style Rules, Example Descriptions, Category Rules.
