@@ -65,6 +65,31 @@ export async function POST(request: Request) {
       : { data: [] as any[] };
     const existingStatus: Record<string, string> = Object.fromEntries((existingRows || []).map(r => [r.product_id, r.status]));
 
+    // Aggregate inventory per product from the nightly-synced inventory table.
+    // Chunk the id list and page each query (Supabase caps ~1000 rows per select).
+    const invSums: Record<string, { qty_inventory: number; qty_avail_sell: number }> = {};
+    for (let i = 0; i < ids.length; i += 50) {
+      const chunk = ids.slice(i, i + 50);
+      let from = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { data: invRows, error: invErr } = await supabaseAdmin
+          .from('inventory')
+          .select('product_id,qty_inventory,qty_avail_sell')
+          .in('product_id', chunk)
+          .range(from, from + 999);
+        if (invErr || !invRows || invRows.length === 0) break;
+        for (const r of invRows) {
+          const pid = String(r.product_id);
+          if (!invSums[pid]) invSums[pid] = { qty_inventory: 0, qty_avail_sell: 0 };
+          invSums[pid].qty_inventory += Number(r.qty_inventory) || 0;
+          invSums[pid].qty_avail_sell += Number(r.qty_avail_sell) || 0;
+        }
+        if (invRows.length < 1000) break;
+        from += 1000;
+      }
+    }
+
     const now = new Date().toISOString();
     const rows = products.map((p: any) => {
       const description = decodeEntities(p.description || '').trim();
@@ -91,6 +116,8 @@ export async function POST(request: Request) {
         current_web_title: webTitle || null,
         current_web_description: webDescription || null,
         am_active: parseInt(String(p.skus_active ?? '0'), 10) > 0,
+        qty_inventory: invSums[String(p.product_id)]?.qty_inventory ?? 0,
+        qty_avail_sell: invSums[String(p.product_id)]?.qty_avail_sell ?? 0,
         missing_copy: missingCopy,
         all_caps: allCaps,
         status,

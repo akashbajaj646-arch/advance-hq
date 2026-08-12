@@ -21,6 +21,8 @@ type CopyRow = {
   generation_error: string | null;
   push_error: string | null;
   pushed_at: string | null;
+  qty_inventory: number | null;
+  qty_avail_sell: number | null;
 };
 
 const TABS = [
@@ -43,6 +45,8 @@ export default function DescriptionsPage() {
   const [search, setSearch] = useState('');
   const [filterActive, setFilterActive] = useState('active');
   const [filterCategory, setFilterCategory] = useState('');
+  const [filterInvField, setFilterInvField] = useState('any');
+  const [filterInvMin, setFilterInvMin] = useState('5');
   const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -81,7 +85,8 @@ export default function DescriptionsPage() {
     if (which === 'guidelines') return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/descriptions/list?status=${which}&search=${encodeURIComponent(q)}&active=${act}&category=${encodeURIComponent(cat)}&limit=200`);
+      const invParams = filterInvField !== 'any' ? `&inv_field=${filterInvField}&inv_min=${encodeURIComponent(filterInvMin || '0')}` : '';
+      const res = await fetch(`/api/descriptions/list?status=${which}&search=${encodeURIComponent(q)}&active=${act}&category=${encodeURIComponent(cat)}${invParams}&limit=200`);
       const data = await res.json();
       setRows(data.rows || []);
       setCounts(data.counts || {});
@@ -89,7 +94,7 @@ export default function DescriptionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [tab, search, filterActive, filterCategory]);
+  }, [tab, search, filterActive, filterCategory, filterInvField, filterInvMin]);
 
   const loadGuidelines = useCallback(async () => {
     const [gRes, sRes] = await Promise.all([
@@ -113,7 +118,7 @@ export default function DescriptionsPage() {
     else loadList(tab);
     setSelected(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, filterActive, filterCategory]);
+  }, [tab, filterActive, filterCategory, filterInvField, filterInvMin]);
 
   function openDrawer(row: CopyRow) {
     setOpen(row);
@@ -508,6 +513,24 @@ export default function DescriptionsPage() {
               <option value="">All categories</option>
               {categories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
+            <select
+              value={filterInvField}
+              onChange={e => setFilterInvField(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+            >
+              <option value="any">Any inventory</option>
+              <option value="qty_inventory">Qty inventory ≥</option>
+              <option value="qty_avail_sell">Avail to sell ≥</option>
+            </select>
+            {filterInvField !== 'any' && (
+              <input
+                type="number"
+                min="0"
+                value={filterInvMin}
+                onChange={e => setFilterInvMin(e.target.value)}
+                className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              />
+            )}
             {tab === 'pending' && (
               <button
                 onClick={generateSelected}
@@ -537,14 +560,15 @@ export default function DescriptionsPage() {
                   <th className="text-left py-2 px-3 font-medium text-gray-500">Style</th>
                   <th className="text-left py-2 px-3 font-medium text-gray-500">Category</th>
                   <th className="text-left py-2 px-3 font-medium text-gray-500">Flags</th>
+                  <th className="text-right py-2 px-3 font-medium text-gray-500 whitespace-nowrap">Inv / ATS</th>
                   <th className="text-left py-2 px-3 font-medium text-gray-500">{tab === 'drafted' ? 'Draft Web Description' : 'Current Web Description'}</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={6} className="py-8 text-center text-gray-400">Loading…</td></tr>
+                  <tr><td colSpan={7} className="py-8 text-center text-gray-400">Loading…</td></tr>
                 ) : rows.length === 0 ? (
-                  <tr><td colSpan={6} className="py-8 text-center text-gray-400">Nothing here. {tab === 'pending' ? 'Hit "Refresh from AM" to scan for products needing copy.' : ''}</td></tr>
+                  <tr><td colSpan={7} className="py-8 text-center text-gray-400">Nothing here. {tab === 'pending' ? 'Hit "Refresh from AM" to scan for products needing copy.' : ''}</td></tr>
                 ) : rows.map(r => (
                   <tr key={r.product_id} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => openDrawer(r)}>
                     {tab === 'pending' && (
@@ -574,6 +598,9 @@ export default function DescriptionsPage() {
                         {r.generation_error && <span className="px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-xs font-medium" title={r.generation_error}>Gen error</span>}
                         {r.push_error && <span className="px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-xs font-medium" title={r.push_error}>Push error</span>}
                       </div>
+                    </td>
+                    <td className="py-2 px-3 text-right text-gray-600 text-xs whitespace-nowrap">
+                      {(r.qty_inventory ?? 0)} / {(r.qty_avail_sell ?? 0)}
                     </td>
                     <td className="py-2 px-3 text-gray-500 max-w-md truncate">
                       {(tab === 'drafted' ? r.draft_web_description : r.current_web_description) || <span className="text-gray-300">empty</span>}

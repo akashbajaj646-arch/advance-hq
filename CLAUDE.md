@@ -245,3 +245,8 @@ Synced from AM into `purchase_orders` (header) + `purchase_order_items`, keyed o
 - pagination[page_number] is SILENTLY IGNORED by AM (returns page 1 forever). Always use pagination[last_id] with the cursor from meta.pagination.last_id, exactly like the sync routes. Descriptions refresh now does this (500/batch).
 - Product-level "active" doesn't exist in AM; derived as skus_active > 0 → stored as product_copy.am_active. Null (pre-migration rows) treated as active in filters.
 - Descriptions queue filters: Active/Inactive/All + category dropdown; tab counts respect filters.
+
+## Descriptions: inventory filter (2026-08-13)
+- product_copy.qty_inventory / qty_avail_sell = per-product SUMS aggregated from the local `inventory` table (SKU-level, nightly sync) during Descriptions refresh. Freshness = nightly sync + last refresh, not live.
+- List filter: inv_field (any|qty_inventory|qty_avail_sell) + inv_min (default 5). Nulls (pre-migration rows) are excluded by the filter until re-refreshed.
+- Queue table shows "Inv / ATS" column.

@@ -20,6 +20,8 @@ export async function GET(request: Request) {
     const search = (searchParams.get('search') || '').trim();
     const active = searchParams.get('active') || 'active'; // active | inactive | all
     const category = (searchParams.get('category') || '').trim();
+    const invField = searchParams.get('inv_field') || 'any'; // any | qty_inventory | qty_avail_sell
+    const invMin = Math.max(0, parseFloat(searchParams.get('inv_min') || '5') || 0);
     const limit = Math.min(200, Math.max(1, parseInt(searchParams.get('limit') || '100', 10)));
     const offset = Math.max(0, parseInt(searchParams.get('offset') || '0', 10));
 
@@ -28,6 +30,7 @@ export async function GET(request: Request) {
       if (active === 'active') q = q.or('am_active.eq.true,am_active.is.null');
       else if (active === 'inactive') q = q.eq('am_active', false);
       if (category) q = q.eq('category', category);
+      if (invField === 'qty_inventory' || invField === 'qty_avail_sell') q = q.gte(invField, invMin);
       return q;
     };
 
