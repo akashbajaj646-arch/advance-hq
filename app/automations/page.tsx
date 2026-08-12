@@ -27,6 +27,15 @@ const STATUS_TABS = [
   { key: 'all', label: 'All' },
 ];
 
+function storeResultSummary(label: string, r: any): string | null {
+  if (!r) return null;
+  if (r.skipped) return `${label}: not on store (ok)`;
+  if (!r.ok) return `${label}: FAILED — ${r.error || 'error'}`;
+  if (r.dry_run) return `${label}: ${r.would_set ? `would set ${r.would_set} (now ${r.current_policy})` : 'already correct'}`;
+  if (r.set_to) return `${label}: set ${r.set_to} (was ${r.was})`;
+  return `${label}: ${r.note || 'ok'}`;
+}
+
 export default function AutomationsPage() {
   const [events, setEvents] = useState<AutoEvent[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -76,6 +85,26 @@ export default function AutomationsPage() {
     }
   }
 
+  async function processPending() {
+    setBusy(true);
+    let totalProcessed = 0;
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        setMsg(`Processing pending events (${totalProcessed} done)...`);
+        const res = await fetch('/api/automations/run', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { setMsg(`Run failed: ${data.error || res.status}`); return; }
+        totalProcessed += data.processed || 0;
+        if (!data.remaining || data.processed === 0) break;
+      }
+      setMsg(`Processed ${totalProcessed} event(s) in ${mode === 'dry_run' ? 'dry-run' : 'LIVE'} mode.`);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function setModeRemote(next: string) {
     const res = await fetch('/api/automations/settings', {
       method: 'POST',
@@ -107,13 +136,24 @@ export default function AutomationsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Automations</h1>
           <p className="text-gray-500 mt-1">SKU active-state changes in AM → Shopify inventory policy on both stores</p>
         </div>
-        <button
-          onClick={runDetection}
-          disabled={busy}
-          className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
-        >
-          {busy ? 'Scanning…' : 'Run Detection Now'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={runDetection}
+            disabled={busy}
+            className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+          >
+            {busy ? 'Working…' : 'Run Detection Now'}
+          </button>
+          {mode !== 'off' && (counts['pending'] ?? 0) > 0 && (
+            <button
+              onClick={processPending}
+              disabled={busy}
+              className={`px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50 ${mode === 'live' ? 'bg-red-600 hover:bg-red-700' : 'bg-brand-600 hover:bg-brand-700'}`}
+            >
+              {mode === 'live' ? `Process ${counts['pending']} Pending (LIVE)` : `Dry-Run ${counts['pending']} Pending`}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Mode + env status */}
@@ -199,6 +239,11 @@ export default function AutomationsPage() {
                 <td className="py-2 px-3">
                   <p className="font-medium text-gray-900">{e.style_number || e.product_id}</p>
                   <p className="text-xs text-gray-400">{[e.attr_2, e.size].filter(Boolean).join(' · ')}</p>
+                  {(e.b2b_result || e.dtc_result) && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {[storeResultSummary('B2B', e.b2b_result), storeResultSummary('DTC', e.dtc_result)].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
                 </td>
                 <td className="py-2 px-3 text-xs text-gray-500 font-mono">{e.sku_concat || '—'}</td>
                 <td className="py-2 px-3 text-xs text-gray-500">{new Date(e.detected_at).toLocaleString()}</td>
