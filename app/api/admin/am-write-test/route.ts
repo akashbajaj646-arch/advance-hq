@@ -134,6 +134,7 @@ export async function GET(request: Request) {
           style_number: before.product.style_number,
           description: before.product.description ?? null,
         },
+        full_product_record: before.product,
       });
     }
 
