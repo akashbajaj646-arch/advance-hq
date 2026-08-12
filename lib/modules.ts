@@ -28,6 +28,7 @@ export const MODULES: ModuleDef[] = [
   { key: 'dashboard', label: 'Dashboard', prefixes: ['/'], selectable: false },
   { key: 'products', label: 'Products', prefixes: ['/products'] },
   { key: 'descriptions', label: 'Descriptions', prefixes: ['/descriptions'], apiPrefixes: ['/api/descriptions'] },
+  { key: 'automations', label: 'Automations', prefixes: ['/automations'], apiPrefixes: ['/api/automations'] },
   { key: 'samples', label: 'Samples (PLM)', prefixes: ['/samples'], apiPrefixes: ['/api/data'] },
   { key: 'inventory', label: 'Inventory', prefixes: ['/inventory'] },
   { key: 'catalog', label: 'Catalog', prefixes: ['/catalog'] },

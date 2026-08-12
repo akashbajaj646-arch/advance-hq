@@ -250,3 +250,11 @@ Synced from AM into `purchase_orders` (header) + `purchase_order_items`, keyed o
 - product_copy.qty_inventory / qty_avail_sell = per-product SUMS aggregated from the local `inventory` table (SKU-level, nightly sync) during Descriptions refresh. Freshness = nightly sync + last refresh, not live.
 - List filter: inv_field (any|qty_inventory|qty_avail_sell) + inv_min (default 5). Nulls (pre-migration rows) are excluded by the filter until re-refreshed.
 - Queue table shows "Inv / ATS" column.
+
+## Shopify inventory-policy automation — Stage 1: detection (2026-08-13)
+- Goal: AM SKU active→inactive flips the variant's "sell when out of stock" to OFF on both Shopify stores (B2B + DTC); reactivation flips it back. Stage 1 = detect + log only.
+- Match key: Shopify variant SKU field === inventory.sku_concat (style+color+size, e.g. "16317-267267One Size Fits Most"); both stores AM-populated so key holds catalog-wide.
+- Tables: sku_active_snapshot (per-SKU active baseline), automation_events (transitions: pending|dry_run|completed|failed|dismissed), automation_settings (shopify_mode: off|dry_run|live; 'live' blocked until SHOPIFY_{B2B,DTC}_{DOMAIN,TOKEN} env vars set).
+- Diff route: /api/admin/automation-diff (public like other cron routes) — first run seeds baseline w/o events; subsequent runs create transition events + refresh snapshot. Freshness = nightly inventory sync.
+- UI: /automations (module key 'automations') — mode control, Run Detection Now, event feed w/ dismiss.
+- Stage 2 (pending): dry-run runner matching events→variants via Shopify Admin API; Stage 3: live writes. Needs cron entry after sync-inventory (vercel.json not yet reviewed).
