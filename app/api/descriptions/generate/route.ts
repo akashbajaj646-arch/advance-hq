@@ -73,7 +73,7 @@ export async function POST(request: Request) {
     const imageUrls: string[] = Array.from(new Set(
       (Array.isArray(product.images) ? product.images : [])
         .map((img: any) => img?.img)
-        .filter((u: any) => typeof u === 'string' && u.startsWith('http'))
+        .filter((u: any): u is string => typeof u === 'string' && u.startsWith('http'))
     )).slice(0, 4);
 
     const userKeywords = (keywords ?? row.keywords ?? '').trim();
