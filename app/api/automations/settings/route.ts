@@ -8,10 +8,17 @@ import { getSession } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
+function storeReady(prefix: string): boolean {
+  const domain = process.env[`${prefix}_DOMAIN`];
+  const token = process.env[`${prefix}_TOKEN`];
+  const ccg = process.env[`${prefix}_CLIENT_ID`] && process.env[`${prefix}_CLIENT_SECRET`];
+  return !!(domain && (token || ccg));
+}
+
 function envStatus() {
   return {
-    b2b_configured: !!(process.env.SHOPIFY_B2B_DOMAIN && process.env.SHOPIFY_B2B_TOKEN),
-    dtc_configured: !!(process.env.SHOPIFY_DTC_DOMAIN && process.env.SHOPIFY_DTC_TOKEN),
+    b2b_configured: storeReady('SHOPIFY_B2B'),
+    dtc_configured: storeReady('SHOPIFY_DTC'),
   };
 }
 

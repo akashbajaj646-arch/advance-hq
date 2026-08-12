@@ -258,3 +258,8 @@ Synced from AM into `purchase_orders` (header) + `purchase_order_items`, keyed o
 - Diff route: /api/admin/automation-diff (public like other cron routes) — first run seeds baseline w/o events; subsequent runs create transition events + refresh snapshot. Freshness = nightly inventory sync.
 - UI: /automations (module key 'automations') — mode control, Run Detection Now, event feed w/ dismiss.
 - Stage 2 (pending): dry-run runner matching events→variants via Shopify Admin API; Stage 3: live writes. Needs cron entry after sync-inventory (vercel.json not yet reviewed).
+
+## Shopify auth: Dev Dashboard + client credentials grant (2026-08-13)
+- Since Jan 1 2026, Shopify custom apps are created via the Dev Dashboard (admin → Settings → Apps → Develop apps → "Build apps using Dev Dashboard"). No static token in the UI anymore: you get Client ID + Client Secret and exchange via client credentials grant (POST https://{shop}/admin/oauth/access_token, grant_type=client_credentials).
+- App URL for our non-embedded apps: https://shopify.dev/apps/default-app-home (post-install redirect goes there — the redirect is NORMAL, not an error). Distribution: Custom, single store, install via generated link.
+- lib/shopify.ts does the CCG exchange automatically with per-instance token caching (refreshes 60s before expiry). Env per store: SHOPIFY_{B2B,DTC}_DOMAIN + _CLIENT_ID + _CLIENT_SECRET. Legacy _TOKEN still honored if present.
