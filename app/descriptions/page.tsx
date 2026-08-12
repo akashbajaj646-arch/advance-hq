@@ -41,6 +41,9 @@ export default function DescriptionsPage() {
   const [rows, setRows] = useState<CopyRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [search, setSearch] = useState('');
+  const [filterActive, setFilterActive] = useState('active');
+  const [filterCategory, setFilterCategory] = useState('');
+  const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState('');
@@ -74,18 +77,19 @@ export default function DescriptionsPage() {
   );
   const [sMsg, setSMsg] = useState('');
 
-  const loadList = useCallback(async (which = tab, q = search) => {
+  const loadList = useCallback(async (which = tab, q = search, act = filterActive, cat = filterCategory) => {
     if (which === 'guidelines') return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/descriptions/list?status=${which}&search=${encodeURIComponent(q)}&limit=200`);
+      const res = await fetch(`/api/descriptions/list?status=${which}&search=${encodeURIComponent(q)}&active=${act}&category=${encodeURIComponent(cat)}&limit=200`);
       const data = await res.json();
       setRows(data.rows || []);
       setCounts(data.counts || {});
+      if (Array.isArray(data.categories)) setCategories(data.categories);
     } finally {
       setLoading(false);
     }
-  }, [tab, search]);
+  }, [tab, search, filterActive, filterCategory]);
 
   const loadGuidelines = useCallback(async () => {
     const [gRes, sRes] = await Promise.all([
@@ -109,7 +113,7 @@ export default function DescriptionsPage() {
     else loadList(tab);
     setSelected(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab]);
+  }, [tab, filterActive, filterCategory]);
 
   function openDrawer(row: CopyRow) {
     setOpen(row);
@@ -122,23 +126,26 @@ export default function DescriptionsPage() {
 
   async function refreshFromAM() {
     setBusy(true);
-    let page = 1;
-    let prevFirst: string | null = null;
+    let lastId: string | null = null;
+    let pageNum = 0;
     let total = 0;
     try {
-      // Client-driven loop keeps each serverless invocation short
+      // Client-driven loop with AM's last_id cursor (page numbers are ignored by AM)
       // eslint-disable-next-line no-constant-condition
       while (true) {
-        setProgress(`Refreshing from ApparelMagic — page ${page} (${total} products so far)...`);
-        const res = await fetch(`/api/descriptions/refresh?page=${page}`, { method: 'POST' });
+        pageNum++;
+        setProgress(`Refreshing from ApparelMagic, batch ${pageNum} (${total} products so far)...`);
+        const url: string = lastId
+          ? `/api/descriptions/refresh?last_id=${encodeURIComponent(lastId)}`
+          : '/api/descriptions/refresh';
+        const res = await fetch(url, { method: 'POST' });
         const data = await res.json();
-        if (!res.ok) { setProgress(`Refresh failed on page ${page}: ${data.error || res.status}`); return; }
+        if (!res.ok) { setProgress(`Refresh failed on batch ${pageNum}: ${data.error || res.status}`); return; }
         total += data.products_upserted || 0;
-        if (!data.has_more || data.first_product_id === prevFirst || page > 100) break;
-        prevFirst = data.first_product_id;
-        page++;
+        if (!data.next_last_id || pageNum > 200) break;
+        lastId = String(data.next_last_id);
       }
-      setProgress(`Refresh complete — ${total} products scanned.`);
+      setProgress(`Refresh complete, ${total} products scanned across ${pageNum} batch(es).`);
       await loadList();
     } finally {
       setBusy(false);
@@ -484,6 +491,23 @@ export default function DescriptionsPage() {
               className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-64 focus:ring-2 focus:ring-brand-500 outline-none"
             />
             <button onClick={() => loadList(tab, search)} className="text-sm text-gray-500 hover:text-gray-700">Search</button>
+            <select
+              value={filterActive}
+              onChange={e => setFilterActive(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+            >
+              <option value="active">Active products</option>
+              <option value="inactive">Inactive products</option>
+              <option value="all">All products</option>
+            </select>
+            <select
+              value={filterCategory}
+              onChange={e => setFilterCategory(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white max-w-[220px]"
+            >
+              <option value="">All categories</option>
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
             {tab === 'pending' && (
               <button
                 onClick={generateSelected}

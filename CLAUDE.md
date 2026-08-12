@@ -240,3 +240,8 @@ Synced from AM into `purchase_orders` (header) + `purchase_order_items`, keyed o
 - Every web description ends with 3-6 short fact lines (order: sizing, fabric, Made-in-X, colors). Generated as separate `quick_facts` field, stored on product_copy.quick_facts, appended below the prose.
 - Enforced at approve: if the block was edited out, it's re-appended from stored facts before the AM push. Toggle: copy_settings.quick_facts_enabled (Settings tab).
 - Facts block is plain newline-separated text. If Shopify collapses the lines in rendering, switch to HTML <ul> format (not yet built).
+
+## AM pagination is CURSOR-based (2026-08-13) — critical gotcha
+- pagination[page_number] is SILENTLY IGNORED by AM (returns page 1 forever). Always use pagination[last_id] with the cursor from meta.pagination.last_id, exactly like the sync routes. Descriptions refresh now does this (500/batch).
+- Product-level "active" doesn't exist in AM; derived as skus_active > 0 → stored as product_copy.am_active. Null (pre-migration rows) treated as active in filters.
+- Descriptions queue filters: Active/Inactive/All + category dropdown; tab counts respect filters.

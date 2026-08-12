@@ -3,14 +3,15 @@ import { supabaseAdmin } from '@/lib/supabase-admin';
 import { getSession } from '@/lib/auth';
 import { amGet } from '@/lib/apparelmagic';
 
-// POST /api/descriptions/refresh?page=N
-// Walks one page of AM products (200/page) and upserts copy-status rows.
-// The UI calls this in a loop until has_more=false — keeps each invocation
-// well under the Vercel time cap. Only is_product=1 items are queued.
+// POST /api/descriptions/refresh?last_id=X
+// Walks one page of AM products and upserts copy-status rows.
+// AM pagination is CURSOR-based: pass pagination[last_id], read the next cursor
+// from meta.pagination.last_id (page numbers are silently ignored by AM).
+// The UI loops until next_last_id is null. Only is_product=1 items are queued.
 
 export const dynamic = 'force-dynamic';
 
-const PAGE_SIZE = 200;
+const PAGE_SIZE = 500;
 
 function decodeEntities(s: string): string {
   return (s || '')
@@ -45,12 +46,11 @@ export async function POST(request: Request) {
     }
 
     const { searchParams } = new URL(request.url);
-    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+    const lastId = searchParams.get('last_id');
 
-    const result = await amGet('products', {
-      'pagination[page_size]': String(PAGE_SIZE),
-      'pagination[page_number]': String(page),
-    });
+    const params: Record<string, string> = { 'pagination[page_size]': String(PAGE_SIZE) };
+    if (lastId) params['pagination[last_id]'] = lastId;
+    const result = await amGet('products', params);
 
     if (!result.ok && result.records.length === 0) {
       return NextResponse.json({ error: 'ApparelMagic fetch failed', status: result.status, detail: result.errors }, { status: 502 });
@@ -90,6 +90,7 @@ export async function POST(request: Request) {
         current_description: description || null,
         current_web_title: webTitle || null,
         current_web_description: webDescription || null,
+        am_active: parseInt(String(p.skus_active ?? '0'), 10) > 0,
         missing_copy: missingCopy,
         all_caps: allCaps,
         status,
@@ -107,14 +108,14 @@ export async function POST(request: Request) {
       upserted = rows.length;
     }
 
+    const nextLastId = result.raw?.meta?.pagination?.last_id
+      ? String(result.raw.meta.pagination.last_id)
+      : null;
+
     return NextResponse.json({
-      page,
       fetched: result.records.length,
       products_upserted: upserted,
-      // AM may cap/ignore page_size (observed: returns 100 max). So keep paging while
-      // records come back; the client stops when fetched=0 OR first_product_id repeats.
-      has_more: result.records.length > 0,
-      first_product_id: result.records[0]?.product_id ?? null,
+      next_last_id: nextLastId, // null = done
     });
   } catch (error: any) {
     console.error('Descriptions refresh error:', error);
