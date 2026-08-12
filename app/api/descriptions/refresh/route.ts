@@ -19,6 +19,17 @@ function decodeEntities(s: string): string {
     .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ');
 }
 
+function extractImageUrls(images: any, limit?: number): string[] {
+  const urls = new Set<string>();
+  const list: any[] = Array.isArray(images) ? images : [];
+  for (const img of list) {
+    const u = img?.img;
+    if (typeof u === 'string' && u.startsWith('http')) urls.add(u);
+  }
+  const arr = Array.from(urls);
+  return limit ? arr.slice(0, limit) : arr;
+}
+
 function isAllCaps(text: string): boolean {
   const letters = (text || '').replace(/[^a-zA-Z]/g, '');
   if (letters.length < 15) return false;
@@ -68,11 +79,7 @@ export async function POST(request: Request) {
       const keepStatus = prior && ['drafted', 'pushed', 'skipped'].includes(prior);
       const status = keepStatus ? prior : (needsCopy ? 'pending' : 'ok');
 
-      const imageUrls: string[] = Array.from(new Set(
-        (Array.isArray(p.images) ? p.images : [])
-          .map((img: any) => img?.img)
-          .filter((u: any): u is string => typeof u === 'string' && u.startsWith('http'))
-      ));
+      const imageUrls: string[] = extractImageUrls(p.images);
 
       return {
         product_id: String(p.product_id),

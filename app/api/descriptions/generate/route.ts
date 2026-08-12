@@ -21,6 +21,17 @@ function decodeEntities(s: string): string {
     .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ');
 }
 
+function extractImageUrls(images: any, limit?: number): string[] {
+  const urls = new Set<string>();
+  const list: any[] = Array.isArray(images) ? images : [];
+  for (const img of list) {
+    const u = img?.img;
+    if (typeof u === 'string' && u.startsWith('http')) urls.add(u);
+  }
+  const arr = Array.from(urls);
+  return limit ? arr.slice(0, limit) : arr;
+}
+
 function enforceFiveWords(s: string): string {
   return (s || '').trim().split(/\s+/).slice(0, 5).join(' ');
 }
@@ -70,11 +81,7 @@ export async function POST(request: Request) {
       decodeEntities(product.web_description || ''),
     ].filter(Boolean).join(' | ');
 
-    const imageUrls: string[] = Array.from(new Set(
-      (Array.isArray(product.images) ? product.images : [])
-        .map((img: any) => img?.img)
-        .filter((u: any): u is string => typeof u === 'string' && u.startsWith('http'))
-    )).slice(0, 4);
+    const imageUrls: string[] = extractImageUrls(product.images, 4);
 
     const userKeywords = (keywords ?? row.keywords ?? '').trim();
 
