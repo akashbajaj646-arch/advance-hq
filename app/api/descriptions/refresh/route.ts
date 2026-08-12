@@ -111,8 +111,9 @@ export async function POST(request: Request) {
       page,
       fetched: result.records.length,
       products_upserted: upserted,
-      // Loop guards for the client: stop when has_more=false OR first_product_id repeats
-      has_more: result.records.length === PAGE_SIZE,
+      // AM may cap/ignore page_size (observed: returns 100 max). So keep paging while
+      // records come back; the client stops when fetched=0 OR first_product_id repeats.
+      has_more: result.records.length > 0,
       first_product_id: result.records[0]?.product_id ?? null,
     });
   } catch (error: any) {

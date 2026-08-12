@@ -85,14 +85,20 @@ export async function POST(request: Request) {
 
     const userKeywords = (keywords ?? row.keywords ?? '').trim();
 
+    const specsText = Array.isArray(product.specs) && product.specs.length
+      ? JSON.stringify(product.specs).slice(0, 400)
+      : '';
+
     const factLines = [
       `Style number: ${product.style_number || 'unknown'}`,
       `Category: ${product.category || 'unknown'}`,
       tags.length ? `Tags: ${tags.join(', ')}` : null,
-      sizeInfo ? `Size range: ${sizeInfo}` : null,
-      product.content ? `Fabric content: ${product.content}` : null,
+      sizeInfo ? `Available sizes: ${sizeInfo}` : null,
+      product.content ? `Fabric content (from product record): ${product.content}` : null,
+      product.care_instructions ? `Care instructions: ${product.care_instructions}` : null,
       product.origin ? `Origin: ${product.origin}` : null,
-      existingCopy ? `Existing copy (raw material — real facts, poor formatting, may be ALL CAPS): ${existingCopy}` : null,
+      specsText ? `Specs: ${specsText}` : null,
+      existingCopy ? `Existing copy (raw material — real facts like fabric/origin often live here in ALL CAPS): ${existingCopy}` : null,
       userKeywords ? `MUST INCORPORATE these user-specified keywords/features: ${userKeywords}` : null,
     ].filter(Boolean).join('\n');
 
@@ -104,7 +110,8 @@ ${factLines}
 
 RULES:
 - The images may show multiple colorways of the same style. NEVER mention a specific color — describe the style, silhouette, print type, and construction instead.
-- Only state facts you can see in the images or that are given above. Never invent fabric content, origin, or care details.
+- Only state facts you can see in the images or that are given above. Never invent fabric content, origin, sizing, or care details.
+- Fabric, sizing, care, and spec facts above are CONTEXT. Do not automatically list them in the copy — include them only when the brand voice guidelines, category rules, or user keywords call for them. Never write anything that contradicts these facts.
 - "description": maximum 5 words, a plain general concept of the garment (e.g. "Traditional Print Dashiki Kaftan").
 - "web_title": a concise, shopper-friendly product title for the web store.
 - "web_description": the main selling description for the web store.
