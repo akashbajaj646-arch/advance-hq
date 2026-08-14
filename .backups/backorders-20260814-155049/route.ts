@@ -130,16 +130,21 @@ async function mcpEnsureReady(): Promise<{ ok: boolean; error?: string }> {
 //   }
 const AM_SET_OPERATION_ID = process.env.AM_SET_OPERATION_ID || 'InventoryQtyAdjustmentController.set';
 
-// Generic execute_actions call with one re-handshake retry
-async function mcpExecute(operationId: string, requestBody: any, pathParams?: Record<string, any>) {
+async function mcpSetInventory(skuId: number, targetQty: number, warehouseId: number, reason: string) {
   const ready = await mcpEnsureReady();
   if (!ready.ok) return { ok: false, error: ready.error, raw: '' };
 
-  const args: any = { operationId, requestBody };
-  if (pathParams) args.pathParams = pathParams;
+  const args = {
+    operationId: AM_SET_OPERATION_ID,
+    requestBody: {
+      items: [{ sku_id: skuId, target_qty: targetQty, warehouse_id: warehouseId }],
+      reason,
+    },
+  };
 
   let r = await mcpCallTool('execute_actions', args);
 
+  // Session/connection hiccup — re-handshake once and retry
   if (r.status === 404 || r.msg?.error?.code === -32000) {
     mcpInitialized = false;
     mcpSessionId = null;
@@ -150,21 +155,9 @@ async function mcpExecute(operationId: string, requestBody: any, pathParams?: Re
 
   const raw = mcpToolText(r.msg);
   if (r.status >= 400 || mcpIsError(r.msg)) {
-    return { ok: false, error: `${operationId} failed: HTTP ${r.status} ${raw.slice(0, 300)}`, raw };
+    return { ok: false, error: `execute_actions failed: HTTP ${r.status} ${raw.slice(0, 300)}`, raw };
   }
   return { ok: true, error: null as string | null, raw };
-}
-
-async function mcpSetInventory(skuId: number, targetQty: number, warehouseId: number, reason: string) {
-  return mcpExecute(AM_SET_OPERATION_ID, {
-    items: [{ sku_id: skuId, target_qty: targetQty, warehouse_id: warehouseId }],
-    reason,
-  });
-}
-
-// Deactivate one SKU (schema: SKUController.update, PUT /api/sku/:id, 'active' allowed)
-async function mcpDeactivateSku(skuId: number, active: boolean) {
-  return mcpExecute('SKUController.update', { active: active ? 1 : 0 }, { id: skuId });
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -199,9 +192,6 @@ async function refreshSnapshot(record: any) {
   const update: Record<string, any> = { last_synced_at: new Date().toISOString() };
   for (const key of Object.keys(record)) {
     if (key.startsWith('qty_')) update[key] = toNum(record[key]);
-  }
-  if (record.active !== undefined) {
-    update.active = record.active === '1' || record.active === 1 || record.active === true;
   }
   try {
     await supabase.from('inventory').update(update).eq('sku_id', record.sku_id);
@@ -259,74 +249,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ warehouses: list });
   }
 
-  // ── BACKORDERS: the verification worklist ──
-  if (action === 'backorders') {
-    const sort = String(body.sort || 'recent');
-    const category = String(body.category || '');
-    const invOp = String(body.inv_op || '');
-    const invVal = body.inv_val;
-    const q = String(body.q || '').trim();
-    const limit = Math.min(parseInt(String(body.limit || '300')) || 300, 500);
-
-    let query = supabase.from('backorder_items').select('*');
-
-    if (q) {
-      query = query.or(`style_number.ilike.%${q}%,sku_concat.ilike.%${q}%,description.ilike.%${q}%,bin_location.ilike.%${q}%`);
-    }
-    if (category) query = query.eq('category', category);
-    if (invOp && invVal !== undefined && invVal !== null && invVal !== '') {
-      const v = toNum(invVal);
-      if (invOp === 'gt') query = query.gt('qty_inventory', v);
-      else if (invOp === 'lt') query = query.lt('qty_inventory', v);
-      else if (invOp === 'gte') query = query.gte('qty_inventory', v);
-      else if (invOp === 'lte') query = query.lte('qty_inventory', v);
-      else if (invOp === 'eq') query = query.eq('qty_inventory', v);
-    }
-
-    if (sort === 'recent') query = query.order('newest_order_date', { ascending: false, nullsFirst: false });
-    else if (sort === 'oldest') query = query.order('oldest_order_date', { ascending: true, nullsFirst: false });
-    else if (sort === 'qty_desc') query = query.order('qty_backordered', { ascending: false });
-    else if (sort === 'qty_asc') query = query.order('qty_backordered', { ascending: true });
-    else if (sort === 'bin') query = query.order('bin_location', { ascending: true, nullsFirst: false });
-    // Stable secondary sort
-    query = query.order('sku_id', { ascending: true }).limit(limit);
-
-    const { data, error } = await query;
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-    const rows = data || [];
-    const totals = {
-      skus: rows.length,
-      units: rows.reduce((s: number, r: any) => s + toNum(r.qty_backordered), 0),
-    };
-    return NextResponse.json({ results: rows, totals });
-  }
-
-  // ── CATEGORIES: distinct category list for the filter dropdown ──
-  if (action === 'categories') {
-    const { data, error } = await supabase.from('backorder_items').select('category').limit(2000);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    const cats = Array.from(new Set((data || []).map((r: any) => r.category).filter(Boolean))).sort();
-    return NextResponse.json({ categories: cats });
-  }
-
   // ── HISTORY ──
   if (action === 'history') {
     const { data } = await supabase
       .from('inventory_adjustments')
-      .select('id, sku_id, style_number, sku_concat, qty_before, qty_target, qty_delta, status, error, source, deactivated, created_at')
+      .select('id, sku_id, style_number, sku_concat, qty_before, qty_target, qty_delta, status, error, source, created_at')
       .order('created_at', { ascending: false })
       .limit(20);
     return NextResponse.json({ history: data || [] });
   }
 
-  // ── SUBMIT: absolute set via the ApparelMagic MCP, optionally + deactivate ──
+  // ── SUBMIT: absolute set via the ApparelMagic MCP ──
   if (action === 'submit') {
     const skuId = String(body.sku_id || '');
     const targetQty = toNum(body.target_qty);
     const warehouseId = parseInt(String(body.warehouse_id || '')) || 0;
     const notes = String(body.notes || '').slice(0, 500);
-    const deactivate = body.deactivate === true;
 
     if (!skuId) return NextResponse.json({ error: 'sku_id required' }, { status: 400 });
     if (body.target_qty === undefined || body.target_qty === null || body.target_qty === '') {
@@ -346,7 +284,6 @@ export async function POST(request: Request) {
 
     const qtyBefore = toNum(current.qty_inventory);
     const delta = targetQty - qtyBefore;
-    const needSet = delta !== 0;
 
     const baseAudit = {
       sku_id: skuId,
@@ -360,71 +297,34 @@ export async function POST(request: Request) {
       notes: notes || null,
     };
 
-    // Nothing to do at all
-    if (!needSet && !deactivate) {
-      await supabase.from('inventory_adjustments').insert({ ...baseAudit, status: 'noop', deactivated: false });
+    if (delta === 0) {
+      await supabase.from('inventory_adjustments').insert({ ...baseAudit, status: 'noop' });
       return NextResponse.json({ success: true, noop: true, qty_before: qtyBefore, qty_target: targetQty, delta: 0 });
     }
 
-    const reason = notes || `Advance HQ warehouse adjustment (set to ${targetQty}${deactivate ? ', deactivate' : ''})`;
-
-    // 1. Inventory set (skipped when already at target, e.g. deactivate-only)
-    let setRaw = '';
-    if (needSet) {
-      const result = await mcpSetInventory(parseInt(skuId), targetQty, warehouseId, reason);
-      setRaw = result.raw || '';
-      if (!result.ok) {
-        await supabase.from('inventory_adjustments').insert({
-          ...baseAudit,
-          status: 'error',
-          error: result.error,
-          deactivated: false,
-          am_endpoint: `mcp:execute_actions:${AM_SET_OPERATION_ID}`,
-          am_response: { raw: (result.raw || '').slice(0, 2000) },
-        });
-        return NextResponse.json({
-          error: 'ApparelMagic rejected the inventory set',
-          detail: result.error,
-        }, { status: 502 });
-      }
-    }
-
-    // 2. Optional deactivation (SKUController.update, active: 0)
-    let deactivated = false;
-    let deactivateError: string | null = null;
-    let deactivateRaw = '';
-    if (deactivate) {
-      const d = await mcpDeactivateSku(parseInt(skuId), false);
-      deactivateRaw = d.raw || '';
-      if (d.ok) {
-        deactivated = true;
-        try {
-          await supabase.from('inventory').update({ active: false, last_synced_at: new Date().toISOString() }).eq('sku_id', skuId);
-        } catch { /* snapshot only */ }
-      } else {
-        deactivateError = d.error || 'Deactivation failed';
-      }
-    }
+    const reason = notes || `Advance HQ warehouse adjustment (set to ${targetQty})`;
+    const result = await mcpSetInventory(parseInt(skuId), targetQty, warehouseId, reason);
 
     await supabase.from('inventory_adjustments').insert({
       ...baseAudit,
-      status: 'success',
-      error: deactivateError ? `deactivate: ${deactivateError}` : null,
-      deactivated,
-      am_endpoint: needSet
-        ? `mcp:execute_actions:${AM_SET_OPERATION_ID}${deactivate ? '+SKUController.update' : ''}`
-        : 'mcp:execute_actions:SKUController.update',
-      am_response: { set: setRaw.slice(0, 1500), deactivate: deactivateRaw.slice(0, 500) },
+      status: result.ok ? 'success' : 'error',
+      error: result.ok ? null : result.error,
+      am_endpoint: `mcp:execute_actions:${AM_SET_OPERATION_ID}`,
+      am_response: { raw: (result.raw || '').slice(0, 2000) },
     });
 
-    // 3. Verify via legacy read and refresh the snapshot
+    if (!result.ok) {
+      return NextResponse.json({
+        error: 'ApparelMagic rejected the inventory set',
+        detail: result.error,
+      }, { status: 502 });
+    }
+
+    // Verify via legacy read and refresh the snapshot
     let qtyAfter: number | null = null;
-    let activeAfter: boolean | null = null;
     const verify = await fetchLiveInventory(skuId);
     if (verify.live) {
       qtyAfter = toNum(verify.record.qty_inventory);
-      const a = verify.record.active;
-      activeAfter = a === undefined ? null : (a === '1' || a === 1 || a === true);
       await refreshSnapshot(verify.record);
     } else if (snapshot) {
       await supabase.from('inventory').update({
@@ -441,9 +341,6 @@ export async function POST(request: Request) {
       delta,
       qty_after: qtyAfter,
       verified: verify.live && qtyAfter === targetQty,
-      deactivated,
-      deactivate_error: deactivateError,
-      active_after: activeAfter,
     });
   }
 

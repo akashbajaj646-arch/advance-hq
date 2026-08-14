@@ -1,67 +1,42 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
-interface SkuResult {
-  sku_id: string;
-  product_id: string;
-  style_number: string;
-  description: string | null;
-  attr_2: string | null;
-  size: string | null;
-  sku_concat: string | null;
-  qty_inventory: number;
-  qty_avail_sell: number;
-}
-
-interface Warehouse {
-  warehouse_id?: string;
-  id?: string;
-  location_id?: string;
-  warehouse_name?: string;
-  name?: string;
-  description?: string;
-}
-
-// AM names the warehouse id field inconsistently across accounts — take whatever exists
-function whId(w: Warehouse): string {
-  const v = w.warehouse_id ?? w.id ?? w.location_id ?? (w as any)[Object.keys(w).find(k => /(^|_)id$/.test(k)) || ''];
-  return v === undefined || v === null ? '' : String(v);
-}
-
-function whName(w: Warehouse): string {
-  return w.warehouse_name || w.name || w.description || `Warehouse ${whId(w)}`;
-}
-
-interface HistoryRow {
-  id: string;
+interface BackorderRow {
   sku_id: string;
   style_number: string | null;
   sku_concat: string | null;
-  qty_before: number;
-  qty_target: number;
-  qty_delta: number;
-  status: string;
-  error: string | null;
-  source: string;
-  created_at: string;
+  description: string | null;
+  attr_2: string | null;
+  size: string | null;
+  category: string | null;
+  qty_backordered: number;
+  order_count: number;
+  oldest_order_date: string | null;
+  newest_order_date: string | null;
+  qty_inventory: number | null;
+  qty_avail_sell: number | null;
+  active: boolean | null;
+  warehouse: string | null;
+  bin_location: string | null;
 }
 
-const QTY_LABELS: Record<string, string> = {
-  qty_inventory: 'On Hand',
-  qty_avail_sell: 'Available to Sell',
-  qty_alloc: 'Allocated',
-  qty_picked: 'Picked',
-  qty_open_so: 'Open Sales Orders',
-  qty_open_po: 'Open POs',
-  qty_wip: 'WIP',
-  qty_min_reorder: 'Min Reorder',
-  qty_min_inventory: 'Min Inventory',
-};
+const SORTS = [
+  { value: 'recent', label: 'Most recent order' },
+  { value: 'oldest', label: 'Oldest order' },
+  { value: 'qty_desc', label: 'Highest backorder qty' },
+  { value: 'qty_asc', label: 'Lowest backorder qty' },
+  { value: 'bin', label: 'Bin location (walk order)' },
+];
 
-function prettyQtyLabel(key: string) {
-  return QTY_LABELS[key] || key.replace(/^qty_/, '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
+const INV_OPS = [
+  { value: '', label: 'Inventory: any' },
+  { value: 'gt', label: 'Inventory >' },
+  { value: 'gte', label: 'Inventory ≥' },
+  { value: 'lt', label: 'Inventory <' },
+  { value: 'lte', label: 'Inventory ≤' },
+  { value: 'eq', label: 'Inventory =' },
+];
 
 async function api(payload: any) {
   const res = await fetch('/api/adjustments', {
@@ -72,280 +47,170 @@ async function api(payload: any) {
   return res.json();
 }
 
-export default function AdjustmentsPage() {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SkuResult[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [showResults, setShowResults] = useState(false);
+function fmtDate(d: string | null): string {
+  if (!d) return '—';
+  try { return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); } catch { return d; }
+}
 
-  const [selected, setSelected] = useState<SkuResult | null>(null);
-  const [record, setRecord] = useState<any | null>(null);
-  const [isLive, setIsLive] = useState(false);
-  const [loadingLive, setLoadingLive] = useState(false);
+export default function BackordersPage() {
+  const [rows, setRows] = useState<BackorderRow[]>([]);
+  const [totals, setTotals] = useState<{ skus: number; units: number }>({ skus: 0, units: 0 });
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [warehouseId, setWarehouseId] = useState('');
-
-  const [targetQty, setTargetQty] = useState('');
-  const [notes, setNotes] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
-
-  const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [sort, setSort] = useState('recent');
+  const [category, setCategory] = useState('');
+  const [categories, setCategories] = useState<string[]>([]);
+  const [invOp, setInvOp] = useState('');
+  const [invVal, setInvVal] = useState('');
+  const [q, setQ] = useState('');
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadHistory = useCallback(async () => {
-    const data = await api({ action: 'history' });
-    setHistory(data.history || []);
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
+    setLoadError(null);
+    const data = await api({ action: 'backorders', sort, category, inv_op: invOp, inv_val: invVal, q });
+    if (data.error) {
+      setLoadError(String(data.error));
+      setRows([]);
+    } else {
+      setRows(data.results || []);
+      setTotals(data.totals || { skus: 0, units: 0 });
+    }
+    setLoading(false);
+  }, [sort, category, invOp, invVal, q]);
+
+  useEffect(() => {
+    api({ action: 'categories' }).then(d => setCategories(d.categories || []));
   }, []);
 
-  useEffect(() => {
-    api({ action: 'warehouses' }).then(data => {
-      const list: Warehouse[] = data.warehouses || [];
-      setWarehouses(list);
-      if (list.length > 0) setWarehouseId(whId(list[0]));
-    });
-    loadHistory();
-  }, [loadHistory]);
-
-  // Debounced SKU search
+  // Reload when filters change (debounced for text/number inputs)
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!showResults) return;
-    debounceRef.current = setTimeout(async () => {
-      setSearching(true);
-      const data = await api({ action: 'search', q: query });
-      setResults(data.results || []);
-      setSearching(false);
-    }, 250);
+    debounceRef.current = setTimeout(() => load(), 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [query, showResults]);
+  }, [load]);
 
-  async function selectSku(sku: SkuResult) {
-    setSelected(sku);
-    setShowResults(false);
-    setQuery(sku.sku_concat || `${sku.style_number} ${sku.attr_2 || ''} ${sku.size || ''}`.trim());
-    setRecord(null);
-    setTargetQty('');
-    setResult(null);
-    setLoadingLive(true);
-    const data = await api({ action: 'live', sku_id: sku.sku_id });
-    setRecord(data.record || null);
-    setIsLive(!!data.live);
-    setLoadingLive(false);
+  function openSku(row: BackorderRow) {
+    window.location.href = `/adjustments/adjust?sku_id=${encodeURIComponent(row.sku_id)}`;
   }
-
-  const currentQty = record ? parseFloat(record.qty_inventory) || 0 : null;
-  const target = targetQty === '' ? null : parseFloat(targetQty);
-  const delta = currentQty !== null && target !== null && !isNaN(target) ? target - currentQty : null;
-
-  async function submit() {
-    if (!selected || target === null || isNaN(target) || !warehouseId) return;
-    if (!confirm(`Set ${selected.sku_concat || selected.style_number} inventory to ${target}?\n\nCurrent: ${currentQty}\nAdjustment: ${delta! > 0 ? '+' : ''}${delta}`)) return;
-
-    setSubmitting(true);
-    setResult(null);
-    const data = await api({
-      action: 'submit',
-      sku_id: selected.sku_id,
-      target_qty: target,
-      warehouse_id: warehouseId,
-      notes,
-    });
-    setSubmitting(false);
-
-    if (data.success) {
-      if (data.noop) {
-        setResult({ ok: true, msg: 'No change needed — inventory already at that quantity.' });
-      } else {
-        setResult({
-          ok: true,
-          msg: `Done. ${data.qty_before} → ${data.qty_target} (${data.delta > 0 ? '+' : ''}${data.delta})${data.verified ? ' — verified in ApparelMagic' : ''}`,
-        });
-        // Refresh the displayed record
-        const fresh = await api({ action: 'live', sku_id: selected.sku_id });
-        setRecord(fresh.record || null);
-        setIsLive(!!fresh.live);
-        setTargetQty('');
-        setNotes('');
-      }
-      loadHistory();
-    } else {
-      setResult({ ok: false, msg: `Failed: ${typeof data.detail === 'string' ? data.detail : data.error || 'Unknown error'}` });
-      loadHistory();
-    }
-  }
-
-  const qtyEntries = record
-    ? Object.keys(record).filter(k => k.startsWith('qty_')).map(k => [k, record[k]] as [string, any])
-    : [];
 
   return (
-    <div className="p-4 md:p-8 max-w-2xl mx-auto pb-32">
-      <div className="mb-5">
-        <h1 className="text-2xl font-bold text-gray-900">Inventory Adjust</h1>
-        <p className="text-gray-500 mt-1 text-sm">Set a SKU&apos;s on-hand quantity — writes directly to ApparelMagic</p>
+    <div className="p-4 md:p-8 max-w-3xl mx-auto pb-24">
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Backorder Verification</h1>
+          <p className="text-gray-500 mt-1 text-sm">
+            {loading ? 'Loading…' : `${totals.skus} SKUs · ${totals.units.toLocaleString()} units on backorder`}
+          </p>
+        </div>
+        <a
+          href="/adjustments/adjust"
+          className="shrink-0 px-3 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700"
+        >
+          Manual adjust
+        </a>
       </div>
 
-      {/* SKU search */}
-      <div className="relative mb-4">
+      {/* Filters */}
+      <div className="card mb-4 space-y-3">
         <input
           type="text"
           inputMode="search"
-          value={query}
-          onChange={e => { setQuery(e.target.value); setShowResults(true); setSelected(null); setRecord(null); setResult(null); }}
-          onFocus={() => setShowResults(true)}
-          placeholder="Search style, SKU, or description…"
-          className="w-full px-4 py-4 text-lg border border-gray-300 rounded-xl focus:ring-2 focus:ring-brand-500 focus:border-brand-500 bg-white"
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          placeholder="Search style, SKU, description, or bin…"
+          className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
         />
-        {showResults && (
-          <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg max-h-80 overflow-y-auto">
-            {searching && <div className="px-4 py-3 text-sm text-gray-400">Searching…</div>}
-            {!searching && results.length === 0 && (
-              <div className="px-4 py-3 text-sm text-gray-400">No SKUs match &quot;{query}&quot;</div>
-            )}
-            {!searching && results.map(r => (
-              <button
-                key={r.sku_id}
-                onClick={() => selectSku(r)}
-                className="w-full text-left px-4 py-3 hover:bg-gray-50 active:bg-gray-100 border-b border-gray-100 last:border-b-0"
-              >
-                <div className="font-medium text-gray-900">{r.sku_concat || r.style_number}</div>
-                <div className="text-sm text-gray-500 flex justify-between">
-                  <span className="truncate mr-2">{r.description}{r.attr_2 ? ` · ${r.attr_2}` : ''}{r.size ? ` · ${r.size}` : ''}</span>
-                  <span className="shrink-0 font-medium text-gray-700">{r.qty_inventory} on hand</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Loading live data */}
-      {loadingLive && (
-        <div className="card text-center py-8 text-gray-500">
-          <div className="animate-pulse">Fetching live inventory from ApparelMagic…</div>
-        </div>
-      )}
-
-      {/* Selected SKU */}
-      {selected && record && !loadingLive && (
-        <div className="card mb-4">
-          <div className="flex items-start justify-between mb-3">
-            <div>
-              <div className="font-semibold text-gray-900 text-lg">{record.sku_concat || selected.sku_concat || record.style_number}</div>
-              <div className="text-sm text-gray-500">
-                {record.description}{record.attr_2 ? ` · ${record.attr_2}` : ''}{record.size ? ` · ${record.size}` : ''}
-              </div>
-            </div>
-            <span className={`text-xs px-2 py-1 rounded-full font-medium shrink-0 ml-2 ${isLive ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-              {isLive ? 'Live from AM' : 'Local snapshot'}
-            </span>
-          </div>
-
-          {/* All inventory fields */}
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            {qtyEntries.map(([key, val]) => (
-              <div key={key} className={`rounded-lg px-3 py-2 ${key === 'qty_inventory' ? 'bg-brand-50 border border-brand-200' : 'bg-gray-50'}`}>
-                <div className="text-xs text-gray-500">{prettyQtyLabel(key)}</div>
-                <div className={`font-semibold ${key === 'qty_inventory' ? 'text-brand-700 text-xl' : 'text-gray-900'}`}>
-                  {parseFloat(val) || 0}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Adjustment form */}
-      {selected && record && !loadingLive && (
-        <div className="card mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-2">Set on-hand quantity to</label>
+        <div className="grid grid-cols-2 gap-2">
+          <select value={sort} onChange={e => setSort(e.target.value)} className="px-3 py-2.5 border border-gray-300 rounded-lg bg-white text-sm">
+            {SORTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+          <select value={category} onChange={e => setCategory(e.target.value)} className="px-3 py-2.5 border border-gray-300 rounded-lg bg-white text-sm">
+            <option value="">All categories</option>
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <select value={invOp} onChange={e => setInvOp(e.target.value)} className="px-3 py-2.5 border border-gray-300 rounded-lg bg-white text-sm">
+            {INV_OPS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
           <input
             type="number"
             inputMode="numeric"
-            value={targetQty}
-            onChange={e => setTargetQty(e.target.value)}
-            placeholder={`Currently ${currentQty}`}
-            className="w-full px-4 py-4 text-2xl font-semibold border border-gray-300 rounded-xl focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-center"
+            value={invVal}
+            onChange={e => setInvVal(e.target.value)}
+            placeholder="qty"
+            disabled={!invOp}
+            className="px-3 py-2.5 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100 disabled:text-gray-400"
           />
+        </div>
+      </div>
 
-          {delta !== null && (
-            <div className={`mt-3 text-center text-sm font-medium rounded-lg py-2 ${delta === 0 ? 'bg-gray-100 text-gray-500' : delta > 0 ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-              {delta === 0 ? 'No change' : `Adjustment: ${delta > 0 ? '+' : ''}${delta} (${currentQty} → ${target})`}
-            </div>
-          )}
-
-          {warehouses.length > 1 && (
-            <div className="mt-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Warehouse</label>
-              <select
-                value={warehouseId}
-                onChange={e => setWarehouseId(e.target.value)}
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white"
-              >
-                {warehouses.map(w => (
-                  <option key={whId(w)} value={whId(w)}>
-                    {whName(w)}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <div className="mt-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Note (optional)</label>
-            <input
-              type="text"
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              placeholder="e.g. Cycle count — found 2 damaged"
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl"
-            />
-          </div>
-
-          <button
-            onClick={submit}
-            disabled={submitting || target === null || isNaN(target!) || delta === 0 || !warehouseId}
-            className="mt-5 w-full py-4 bg-brand-600 hover:bg-brand-700 active:bg-brand-800 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-lg font-semibold rounded-xl transition-colors"
-          >
-            {submitting ? 'Updating ApparelMagic…' : 'Update inventory'}
-          </button>
-
-          {result && (
-            <div className={`mt-3 rounded-lg px-4 py-3 text-sm font-medium ${result.ok ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
-              {result.msg}
-            </div>
+      {loadError && (
+        <div className="card mb-4 bg-red-50 border-red-200 text-red-800 text-sm">
+          Couldn&apos;t load backorders: {loadError}
+          {loadError.includes('backorder_items') && (
+            <div className="mt-1 text-red-600">The backorder_items view may not be created yet — run the SQL from sql/backorders_view.sql in the Supabase SQL Editor.</div>
           )}
         </div>
       )}
 
-      {/* Recent adjustments */}
-      {history.length > 0 && (
-        <div className="card">
-          <h3 className="font-semibold text-gray-900 mb-3">Recent adjustments</h3>
-          <div className="divide-y divide-gray-100">
-            {history.map(h => (
-              <div key={h.id} className="py-2.5 flex items-center justify-between text-sm">
-                <div className="min-w-0 mr-2">
-                  <div className="font-medium text-gray-900 truncate">{h.sku_concat || h.style_number || h.sku_id}</div>
-                  <div className="text-xs text-gray-400">
-                    {new Date(h.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                    {h.status === 'error' && <span className="text-red-500 ml-1">· failed</span>}
-                    {h.status === 'noop' && <span className="ml-1">· no change</span>}
-                  </div>
+      {loading && (
+        <div className="card text-center py-10 text-gray-400 animate-pulse">Loading backorders…</div>
+      )}
+
+      {!loading && !loadError && rows.length === 0 && (
+        <div className="card text-center py-10 text-gray-500">
+          No backordered items match these filters.
+        </div>
+      )}
+
+      {/* Rows */}
+      <div className="space-y-2">
+        {rows.map(r => (
+          <button
+            key={r.sku_id}
+            onClick={() => openSku(r)}
+            className="w-full text-left card hover:border-brand-300 active:bg-gray-50 transition-colors !p-0 overflow-hidden"
+          >
+            <div className="flex items-stretch">
+              {/* Bin location — the walking anchor */}
+              <div className="shrink-0 w-24 md:w-28 bg-brand-50 border-r border-brand-100 flex flex-col items-center justify-center px-2 py-3">
+                <div className="font-mono font-bold text-brand-700 text-lg leading-tight text-center break-all">
+                  {r.bin_location || '—'}
                 </div>
-                <div className="shrink-0 text-right">
-                  <div className="font-medium text-gray-900">{h.qty_before} → {h.qty_target}</div>
-                  <div className={`text-xs font-medium ${h.qty_delta > 0 ? 'text-green-600' : h.qty_delta < 0 ? 'text-red-600' : 'text-gray-400'}`}>
-                    {h.qty_delta > 0 ? '+' : ''}{h.qty_delta}
-                  </div>
+                <div className="text-[10px] text-brand-500 mt-1 text-center leading-tight">
+                  {r.warehouse || 'no bin set'}
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
+
+              {/* Item */}
+              <div className="flex-1 min-w-0 px-3 py-2.5">
+                <div className="font-semibold text-gray-900 truncate">
+                  {r.sku_concat || r.style_number || r.sku_id}
+                  {r.active === false && <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-200 text-gray-600 align-middle">INACTIVE</span>}
+                </div>
+                <div className="text-xs text-gray-500 truncate">
+                  {r.description}{r.attr_2 ? ` · ${r.attr_2}` : ''}{r.size ? ` · ${r.size}` : ''}
+                </div>
+                <div className="text-[11px] text-gray-400 mt-1">
+                  {r.category ? `${r.category} · ` : ''}{r.order_count} order{r.order_count === 1 ? '' : 's'} · oldest {fmtDate(r.oldest_order_date)} · latest {fmtDate(r.newest_order_date)}
+                </div>
+              </div>
+
+              {/* Quantities */}
+              <div className="shrink-0 flex flex-col items-end justify-center pr-3 py-2.5">
+                <div className="text-lg font-bold text-red-600 leading-tight">{Number(r.qty_backordered)}</div>
+                <div className="text-[10px] text-gray-400">backordered</div>
+                <div className="text-xs font-medium text-gray-700 mt-1">{r.qty_inventory ?? '—'} <span className="text-gray-400 font-normal">on hand</span></div>
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {!loading && rows.length >= 300 && (
+        <p className="text-center text-xs text-gray-400 mt-3">Showing first 300 — narrow with filters to see more.</p>
       )}
     </div>
   );
