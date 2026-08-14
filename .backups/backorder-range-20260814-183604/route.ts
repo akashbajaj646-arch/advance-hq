@@ -259,7 +259,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ warehouses: list });
   }
 
-  // ── BACKORDERS: the verification worklist (date-windowed aggregation) ──
+  // ── BACKORDERS: the verification worklist ──
   if (action === 'backorders') {
     const sort = String(body.sort || 'recent');
     const category = String(body.category || '');
@@ -267,10 +267,8 @@ export async function POST(request: Request) {
     const invVal = body.inv_val;
     const q = String(body.q || '').trim();
     const limit = Math.min(parseInt(String(body.limit || '300')) || 300, 500);
-    const dateStart = body.date_start ? String(body.date_start) : null; // YYYY-MM-DD
-    const dateEnd = body.date_end ? String(body.date_end) : null;
 
-    let query: any = supabase.rpc('backorder_items_range', { p_start: dateStart, p_end: dateEnd });
+    let query = supabase.from('backorder_items').select('*');
 
     if (q) {
       query = query.or(`style_number.ilike.%${q}%,sku_concat.ilike.%${q}%,description.ilike.%${q}%,bin_location.ilike.%${q}%`);
@@ -290,6 +288,7 @@ export async function POST(request: Request) {
     else if (sort === 'qty_desc') query = query.order('qty_backordered', { ascending: false });
     else if (sort === 'qty_asc') query = query.order('qty_backordered', { ascending: true });
     else if (sort === 'bin') query = query.order('bin_location', { ascending: true, nullsFirst: false });
+    // Stable secondary sort
     query = query.order('sku_id', { ascending: true }).limit(limit);
 
     const { data, error } = await query;
@@ -305,7 +304,7 @@ export async function POST(request: Request) {
 
   // ── CATEGORIES: distinct category list for the filter dropdown ──
   if (action === 'categories') {
-    const { data, error } = await supabase.rpc('backorder_items_range', { p_start: null, p_end: null }).limit(2000);
+    const { data, error } = await supabase.from('backorder_items').select('category').limit(2000);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     const cats = Array.from(new Set((data || []).map((r: any) => r.category).filter(Boolean))).sort();
     return NextResponse.json({ categories: cats });

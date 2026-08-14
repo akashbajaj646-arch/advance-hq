@@ -29,32 +29,6 @@ const SORTS = [
   { value: 'bin', label: 'Bin location (walk order)' },
 ];
 
-const RANGES = [
-  { value: 'all', label: 'All time' },
-  { value: 'week', label: 'This week' },
-  { value: 'month', label: 'This month' },
-  { value: 'year', label: 'This year' },
-  { value: 'custom', label: 'Custom' },
-];
-
-function fmtISO(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function rangeToDates(range: string, customStart: string, customEnd: string): { start: string | null; end: string | null } {
-  const now = new Date();
-  if (range === 'week') {
-    const day = now.getDay(); // 0=Sun
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - ((day + 6) % 7));
-    return { start: fmtISO(monday), end: null };
-  }
-  if (range === 'month') return { start: fmtISO(new Date(now.getFullYear(), now.getMonth(), 1)), end: null };
-  if (range === 'year') return { start: `${now.getFullYear()}-01-01`, end: null };
-  if (range === 'custom') return { start: customStart || null, end: customEnd || null };
-  return { start: null, end: null };
-}
-
 const INV_OPS = [
   { value: '', label: 'Inventory: any' },
   { value: 'gt', label: 'Inventory >' },
@@ -90,17 +64,13 @@ export default function BackordersPage() {
   const [invOp, setInvOp] = useState('');
   const [invVal, setInvVal] = useState('');
   const [q, setQ] = useState('');
-  const [range, setRange] = useState('all');
-  const [customStart, setCustomStart] = useState('');
-  const [customEnd, setCustomEnd] = useState('');
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
     setLoadError(null);
-    const { start, end } = rangeToDates(range, customStart, customEnd);
-    const data = await api({ action: 'backorders', sort, category, inv_op: invOp, inv_val: invVal, q, date_start: start, date_end: end });
+    const data = await api({ action: 'backorders', sort, category, inv_op: invOp, inv_val: invVal, q });
     if (data.error) {
       setLoadError(String(data.error));
       setRows([]);
@@ -109,7 +79,7 @@ export default function BackordersPage() {
       setTotals(data.totals || { skus: 0, units: 0 });
     }
     setLoading(false);
-  }, [sort, category, invOp, invVal, q, range, customStart, customEnd]);
+  }, [sort, category, invOp, invVal, q]);
 
   useEffect(() => {
     api({ action: 'categories' }).then(d => setCategories(d.categories || []));
@@ -153,29 +123,6 @@ export default function BackordersPage() {
           placeholder="Search style, SKU, description, or bin…"
           className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
         />
-        <div className="flex flex-wrap gap-1.5">
-          {RANGES.map(r => (
-            <button
-              key={r.value}
-              onClick={() => setRange(r.value)}
-              className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${range === r.value ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
-        {range === 'custom' && (
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Orders from</label>
-              <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Orders to</label>
-              <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-            </div>
-          </div>
-        )}
         <div className="grid grid-cols-2 gap-2">
           <select value={sort} onChange={e => setSort(e.target.value)} className="px-3 py-2.5 border border-gray-300 rounded-lg bg-white text-sm">
             {SORTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
