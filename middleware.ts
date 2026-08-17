@@ -3,7 +3,7 @@ import type { NextRequest } from 'next/server';
 import { moduleForPath, moduleForApiPath, isAlwaysAllowed, hasModuleAccess } from '@/lib/modules';
 
 // Routes that don't require auth
-const PUBLIC_PATHS = ["/api/admin/", '/login', '/signup', '/api/auth/login', '/api/auth/signup', '/api/auth/bootstrap', '/api/auth/me'];
+const PUBLIC_PATHS = ['/api/track/', '/api/tickets/', '/support', '/api/admin/', '/login', '/signup', '/api/auth/login', '/api/auth/signup', '/api/auth/bootstrap', '/api/auth/me', '/api/cron/', '/api/account/', '/account/payment-methods', '/api/wholesale/apply'];
 
 type SessionUser = { role: string | null; permissions: string[] | null; is_active: boolean };
 
@@ -33,6 +33,11 @@ async function lookupSession(token: string): Promise<{ user: SessionUser } | 'in
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // CORS preflights carry no cookies, so never gate them on a session
+  if (request.method === 'OPTIONS') {
+    return NextResponse.next();
+  }
 
   // Allow public paths
   if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
