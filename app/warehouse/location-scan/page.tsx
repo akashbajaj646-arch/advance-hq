@@ -443,16 +443,39 @@ export default function LocationScanPage() {
 
 function ChangeList({ title, color, items }: { title: string; color: string; items: Change[] }) {
   if (items.length === 0) return null;
+  const groups = new Map<string, Change[]>();
+  for (const c of items) {
+    const k = c.style || `sku ${c.skuId}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k)!.push(c);
+  }
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color, marginBottom: 4 }}>{title}</div>
-      {items.map((c, i) => (
-        <div key={i} style={{ fontSize: 12, padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
-          <b>{c.style || `sku ${c.skuId}`}</b> <span style={{ color: "#999" }}>(sku {c.skuId})</span>
-          <br />
-          <span style={{ color: "#999" }}>{c.oldLocation}</span> → <b>{c.newLocation}</b>
-        </div>
-      ))}
+      {Array.from(groups.entries()).map(([style, list], i) => {
+        const uniform = list.every(
+          (c) => c.oldLocation === list[0].oldLocation && c.newLocation === list[0].newLocation
+        );
+        return (
+          <div key={i} style={{ fontSize: 12, padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
+            <b>{style}</b>{" "}
+            <span style={{ color: "#999" }}>
+              ({list.length} SKU{list.length === 1 ? "" : "s"})
+            </span>
+            {uniform ? (
+              <div>
+                <span style={{ color: "#999" }}>{list[0].oldLocation}</span> → <b>{list[0].newLocation}</b>
+              </div>
+            ) : (
+              list.map((c, j) => (
+                <div key={j}>
+                  <span style={{ color: "#999" }}>{c.oldLocation}</span> → <b>{c.newLocation}</b>
+                </div>
+              ))
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

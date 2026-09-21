@@ -146,6 +146,27 @@ export async function skuIdsForStyle(style: string): Promise<{
   return { skuIds: [], matchedStyle: null, detected: { styleKey, skuKey } };
 }
 
+/** Batch-resolve sku_ids back to their product/style numbers (for display). */
+export async function stylesForSkuIds(skuIds: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (skuIds.length === 0) return map;
+  const supabase = sb();
+  const probe = await supabase.from("inventory").select("*").limit(1);
+  const sample = probe.data?.[0];
+  const styleKey = detectKey(sample, STYLE_KEYS);
+  const skuKey = detectKey(sample, SKU_KEYS);
+  if (!styleKey || !skuKey) return map;
+  for (let i = 0; i < skuIds.length; i += 500) {
+    const chunk = skuIds.slice(i, i + 500);
+    const { data } = await supabase
+      .from("inventory")
+      .select(`${skuKey}, ${styleKey}`)
+      .in(skuKey, chunk);
+    for (const r of (data || []) as any[]) map.set(String(r[skuKey]), String(r[styleKey]));
+  }
+  return map;
+}
+
 /** Find synced sku_warehouse rows in a warehouse whose location mentions a bin. */
 export async function syncedRowsMentioningBin(warehouseId: string, bin: string) {
   const supabase = sb();

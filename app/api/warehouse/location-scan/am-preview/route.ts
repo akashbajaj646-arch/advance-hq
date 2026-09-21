@@ -4,6 +4,7 @@ import {
   isPickableSegment,
   mapLimit,
   skuIdsForStyle,
+  stylesForSkuIds,
   syncedRowsMentioningBin,
   withBoxAdded,
   withBoxRemoved,
@@ -86,19 +87,23 @@ export async function POST(req: NextRequest) {
       .map((c) => c.skuId)
       .filter((id) => !presentSkuIds.has(id));
 
-    await mapLimit(Array.from(new Set(removalSkuIds)), 4, async (skuId) => {
+    const uniqueRemovalIds = Array.from(new Set(removalSkuIds));
+    const removalStyles = await stylesForSkuIds(uniqueRemovalIds);
+
+    await mapLimit(uniqueRemovalIds, 4, async (skuId) => {
+      const style = removalStyles.get(skuId) || `sku ${skuId}`;
       const rows = await amGetSkuWarehouse(skuId, warehouseId);
       for (const row of rows) {
         const old = String(row.location || "");
         if (isPickableSegment(old, bin)) {
-          flags.push(`sku ${skuId}: ${bin} is the PICKABLE segment ("${old}") — not touched, review manually`);
+          flags.push(`${style}: ${bin} is the PICKABLE segment ("${old}") — not touched, review manually`);
           continue;
         }
         const next = withBoxRemoved(old, bin);
         if (next) {
           changes.push({
             action: "remove",
-            style: "",
+            style,
             skuId,
             amRowId: String(row.id),
             oldLocation: old,
