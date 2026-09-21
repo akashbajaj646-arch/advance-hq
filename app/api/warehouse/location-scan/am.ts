@@ -60,6 +60,29 @@ export async function amPutSkuWarehouseLocation(rowId: string, location: string)
   return text;
 }
 
+export async function logActivity(entry: {
+  event: string;
+  warehouse_id?: number | null;
+  bin?: string | null;
+  batch_id?: string | null;
+  summary?: any;
+  image_paths?: string[] | null;
+}) {
+  try {
+    const { error } = await sb().from("location_activity_log").insert({
+      event: entry.event,
+      warehouse_id: entry.warehouse_id ?? null,
+      bin: entry.bin ?? null,
+      batch_id: entry.batch_id ?? null,
+      summary: entry.summary ?? null,
+      image_paths: entry.image_paths ?? null,
+    });
+    if (error) console.error("activity log failed", error.message);
+  } catch (e) {
+    console.error("activity log failed", e);
+  }
+}
+
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ---- location string helpers ----

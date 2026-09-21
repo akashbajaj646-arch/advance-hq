@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   amGetSkuWarehouse,
   isPickableSegment,
+  logActivity,
   mapLimit,
   skuIdsForStyle,
   stylesForSkuIds,
@@ -127,13 +128,16 @@ export async function POST(req: NextRequest) {
       flags.push(`${style}: ${bin} is the PICKABLE area for ${plural(n)} — not touched, review manually`);
     }
 
-    return NextResponse.json({
+    const adds = changes.filter((c) => c.action === "add");
+    const removals = changes.filter((c) => c.action === "remove");
+    await logActivity({
+      event: "preview",
+      warehouse_id: Number(warehouseId),
       bin,
-      warehouse_id: warehouseId,
-      adds: changes.filter((c) => c.action === "add"),
-      removals: changes.filter((c) => c.action === "remove"),
-      flags,
+      summary: { adds: adds.length, removals: removals.length, flags },
     });
+
+    return NextResponse.json({ bin, warehouse_id: warehouseId, adds, removals, flags });
   } catch (e: any) {
     return NextResponse.json({ error: e.message || "preview failed" }, { status: 500 });
   }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sb } from "./am";
+import { logActivity, sb } from "./am";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -21,6 +21,8 @@ Respond with ONLY valid JSON, no markdown fences, in this shape:
 {"items":[{"sku":"AB-12345","qty":3,"crossed_out":false,"note":""}]}`;
 
 export async function POST(req: NextRequest) {
+  let bin = "";
+  let wh: number | null = null;
   try {
     const body = await req.json();
     const images: { media_type: string; data: string }[] = Array.isArray(body.images)
@@ -29,6 +31,8 @@ export async function POST(req: NextRequest) {
     if (images.length === 0) {
       return NextResponse.json({ error: "No images provided" }, { status: 400 });
     }
+    bin = String(body.location || "").trim().toUpperCase();
+    wh = Number(body.warehouse_id) || null;
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
@@ -83,6 +87,7 @@ export async function POST(req: NextRequest) {
     if (!res.ok) {
       const detail = await res.text();
       console.error("anthropic error", res.status, detail.slice(0, 500));
+      await logActivity({ event: "scan_error", warehouse_id: wh, bin, summary: { error: `Vision API error (${res.status})` }, image_paths: imageUrls });
       return NextResponse.json({ error: `Vision API error (${res.status})` }, { status: 502 });
     }
 
@@ -97,6 +102,7 @@ export async function POST(req: NextRequest) {
       parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
     } catch {
       console.error("parse failure, raw model text:", text.slice(0, 500));
+      await logActivity({ event: "scan_error", warehouse_id: wh, bin, summary: { error: "Could not parse model output" }, image_paths: imageUrls });
       return NextResponse.json({ error: "Could not parse model output, retry the scan" }, { status: 502 });
     }
 
@@ -109,9 +115,23 @@ export async function POST(req: NextRequest) {
         }))
       : [];
 
+    await logActivity({
+      event: "scan",
+      warehouse_id: wh,
+      bin,
+      summary: {
+        photos: images.length,
+        lines: items.length,
+        kept: items.filter((i: any) => !i.crossed_out).length,
+        crossed: items.filter((i: any) => i.crossed_out).length,
+      },
+      image_paths: imageUrls,
+    });
+
     return NextResponse.json({ items, image_urls: imageUrls });
   } catch (e: any) {
     console.error("location-scan error", e);
+    await logActivity({ event: "scan_error", warehouse_id: wh, bin, summary: { error: e.message || "Scan failed" } });
     return NextResponse.json({ error: e.message || "Scan failed" }, { status: 500 });
   }
 }

@@ -62,6 +62,7 @@ export default function LocationScanPage() {
   const [err, setErr] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [histRows, setHistRows] = useState<any[]>([]);
+  const [histEvents, setHistEvents] = useState<any[]>([]);
   const [histBusy, setHistBusy] = useState(false);
   const [revertingBatch, setRevertingBatch] = useState<string | null>(null);
   const [scanImageUrls, setScanImageUrls] = useState<string[]>([]);
@@ -104,6 +105,7 @@ export default function LocationScanPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           location: loc,
+          warehouse_id: warehouse,
           images: images.map((i) => ({ media_type: "image/jpeg", data: i.dataUrl.split(",")[1] })),
         }),
       });
@@ -227,6 +229,7 @@ export default function LocationScanPage() {
       const res = await fetch("/api/warehouse/location-scan/history");
       const json = await res.json();
       setHistRows(json.rows || []);
+      setHistEvents(json.events || []);
     } catch {}
     setHistBusy(false);
   }
@@ -304,28 +307,87 @@ export default function LocationScanPage() {
             <div style={{ fontSize: 13, color: "#666" }}>Loading history…</div>
           ) : (
             (() => {
+              const whName = (w: any) => (Number(w) === 1 ? "Leuning St" : Number(w) === 2 ? "State St" : "");
+              const fmtT = (d: string) =>
+                new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
               const batches = new Map<string, any[]>();
               for (const r of histRows) {
                 if (!batches.has(r.batch_id)) batches.set(r.batch_id, []);
                 batches.get(r.batch_id)!.push(r);
               }
-              if (batches.size === 0)
-                return <div style={{ fontSize: 13, color: "#666" }}>No changes logged yet.</div>;
-              return Array.from(batches.entries()).map(([bid, rows]) => {
-                const first = rows[0];
-                const okCount = rows.filter((r: any) => r.status === "ok").length;
-                const fullyReverted =
-                  okCount > 0 && rows.every((r: any) => r.status !== "ok" || r.reverted_at);
-                const d = new Date(first.created_at);
+              const entries: { t: number; kind: "batch" | "event"; batch?: any[]; ev?: any }[] = [];
+              for (const rowsB of Array.from(batches.values()))
+                entries.push({ t: new Date(rowsB[0].created_at).getTime(), kind: "batch", batch: rowsB });
+              for (const ev of histEvents) entries.push({ t: new Date(ev.created_at).getTime(), kind: "event", ev });
+              entries.sort((a, b) => b.t - a.t);
+              if (entries.length === 0)
+                return <div style={{ fontSize: 13, color: "#666" }}>No history yet.</div>;
+              return entries.map((e, idx) => {
+                if (e.kind === "event") {
+                  const ev = e.ev;
+                  const sm = ev.summary || {};
+                  const isErr = ev.event === "scan_error";
+                  return (
+                    <div
+                      key={`e${idx}`}
+                      style={{
+                        border: "1px solid #eee",
+                        borderRadius: 10,
+                        padding: "8px 12px",
+                        marginBottom: 10,
+                        background: isErr ? "#fdecec" : "#fff",
+                      }}
+                    >
+                      <b style={{ fontSize: 13, textTransform: "capitalize" }}>{String(ev.event).replace("_", " ")}</b>{" "}
+                      <span style={{ fontSize: 12, color: "#666" }}>
+                        {ev.bin} · {whName(ev.warehouse_id)} · {fmtT(ev.created_at)}
+                      </span>
+                      <div style={{ fontSize: 12, color: isErr ? "#a12622" : "#666", marginTop: 2 }}>
+                        {ev.event === "scan" &&
+                          `${sm.lines ?? 0} lines read (${sm.kept ?? 0} kept, ${sm.crossed ?? 0} crossed out) from ${sm.photos ?? 0} photo(s)`}
+                        {ev.event === "scan_error" && `Scan failed: ${sm.error || "unknown error"}`}
+                        {ev.event === "save" && `Saved ${sm.count ?? 0} rows`}
+                        {ev.event === "preview" && `${sm.adds ?? 0} adds, ${sm.removals ?? 0} removals`}
+                        {ev.event === "revert" &&
+                          `Reverted ${sm.reverted ?? 0}, skipped ${sm.skipped ?? 0}, errors ${sm.errors ?? 0}`}
+                      </div>
+                      {Array.isArray(sm.flags) && sm.flags.length > 0 && (
+                        <div style={{ fontSize: 12, color: "#8a6d1a", marginTop: 4 }}>
+                          {sm.flags.map((f: string, i: number) => (
+                            <div key={i}>⚠ {f}</div>
+                          ))}
+                        </div>
+                      )}
+                      {Array.isArray(ev.image_paths) && ev.image_paths.length > 0 && (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                          {ev.image_paths.map((u: string, k: number) => (
+                            <a key={k} href={u} target="_blank" rel="noreferrer">
+                              <img
+                                src={u}
+                                alt=""
+                                style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 6, border: "1px solid #eee" }}
+                              />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+                const rowsB = e.batch as any[];
+                const first = rowsB[0];
+                const okCount = rowsB.filter((r: any) => r.status === "ok").length;
+                const errCount = rowsB.filter((r: any) => r.status === "error").length;
+                const fullyReverted = okCount > 0 && rowsB.every((r: any) => r.status !== "ok" || r.reverted_at);
+                const bid = first.batch_id;
                 return (
                   <div
-                    key={bid}
+                    key={`b${idx}`}
                     style={{ border: "1px solid #eee", borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <b style={{ fontSize: 13 }}>
-                        {first.bin} · {Number(first.warehouse_id) === 1 ? "Leuning St" : "State St"} ·{" "}
-                        {d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                        Apply · {first.bin} · {whName(first.warehouse_id)} · {fmtT(first.created_at)}
                       </b>
                       {fullyReverted ? (
                         <span style={{ fontSize: 12, color: "#999" }}>reverted</span>
@@ -340,8 +402,8 @@ export default function LocationScanPage() {
                         </button>
                       ) : null}
                     </div>
-                    <div style={{ fontSize: 12, color: "#666", margin: "2px 0 6px" }}>
-                      {okCount} applied · {rows.length - okCount} other
+                    <div style={{ fontSize: 12, color: errCount > 0 ? "#a12622" : "#666", margin: "2px 0 6px" }}>
+                      {okCount} applied · {errCount} error{errCount === 1 ? "" : "s"} · {rowsB.length - okCount - errCount} other
                     </div>
                     {Array.isArray(first.image_paths) && first.image_paths.length > 0 && (
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
@@ -356,7 +418,7 @@ export default function LocationScanPage() {
                         ))}
                       </div>
                     )}
-                    {rows.map((r: any, i: number) => (
+                    {rowsB.map((r: any, i: number) => (
                       <div
                         key={i}
                         style={{
@@ -368,7 +430,11 @@ export default function LocationScanPage() {
                       >
                         <b>{r.style || `sku ${r.sku_id}`}</b> [{r.action}]{" "}
                         <span style={{ color: "#999" }}>{r.old_location}</span> → {r.new_location}
-                        {r.status !== "ok" && <span style={{ color: "#a12622" }}> ({r.status})</span>}
+                        {r.status !== "ok" && (
+                          <span style={{ color: "#a12622" }}>
+                            {" "}({r.status}{r.detail ? `: ${r.detail}` : ""})
+                          </span>
+                        )}
                         {r.reverted_at && <span style={{ color: "#999" }}> (reverted)</span>}
                       </div>
                     ))}

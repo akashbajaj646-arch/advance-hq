@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { logActivity } from "../am";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,8 @@ export async function POST(req: NextRequest) {
       console.error("save error", error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    await logActivity({ event: "save", warehouse_id: warehouseId, bin: location, summary: { count: clean.length } });
 
     return NextResponse.json({ inserted: clean.length });
   } catch (e: any) {

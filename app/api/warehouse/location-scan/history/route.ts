@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   amGetSkuWarehouse,
   amPutSkuWarehouseLocation,
+  logActivity,
   mapLimit,
   sb,
   segmentsEqual,
@@ -19,7 +20,13 @@ export async function GET() {
       .order("created_at", { ascending: false })
       .limit(300);
     if (error) throw new Error(error.message);
-    return NextResponse.json({ rows: data || [] });
+    const { data: events, error: evErr } = await sb()
+      .from("location_activity_log")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(300);
+    if (evErr) console.error("activity log read failed", evErr.message);
+    return NextResponse.json({ rows: data || [], events: events || [] });
   } catch (e: any) {
     return NextResponse.json({ error: e.message || "history failed" }, { status: 500 });
   }
@@ -77,12 +84,19 @@ export async function POST(req: NextRequest) {
       }
     });
 
-    return NextResponse.json({
+    const summary = {
       reverted: results.filter((r) => r.status === "ok").length,
       skipped: results.filter((r) => r.status === "skipped_drift").length,
       errors: results.filter((r) => r.status === "error").length,
-      results,
+    };
+    await logActivity({
+      event: "revert",
+      warehouse_id: Number(rows[0]?.warehouse_id) || null,
+      bin: rows[0]?.bin || null,
+      batch_id: batchId,
+      summary,
     });
+    return NextResponse.json({ ...summary, results });
   } catch (e: any) {
     return NextResponse.json({ error: e.message || "revert failed" }, { status: 500 });
   }
