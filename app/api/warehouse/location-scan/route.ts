@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = process.env.SCAN_VISION_MODEL || "claude-sonnet-5";
 const MAX_IMAGES = 8;
 
 const PROMPT = `You are reading photos of warehouse pallet papers for a wholesale apparel company. Each pallet has one or more handwritten or printed papers listing style numbers (SKUs), usually in the form AB-12345 or AB12345, often followed by "= qty" (box count).
