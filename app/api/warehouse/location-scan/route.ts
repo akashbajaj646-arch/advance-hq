@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sb } from "./am";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -32,6 +33,27 @@ export async function POST(req: NextRequest) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
+    }
+
+    // Persist the photos so history can show the source papers (best-effort).
+    const imageUrls: string[] = [];
+    try {
+      const supabase = sb();
+      const stamp = new Date().toISOString().slice(0, 10);
+      for (let i = 0; i < images.length; i++) {
+        const path = `${stamp}/${crypto.randomUUID()}.jpg`;
+        const { error: upErr } = await supabase.storage
+          .from("location-scan-photos")
+          .upload(path, Buffer.from(images[i].data, "base64"), { contentType: "image/jpeg" });
+        if (!upErr) {
+          const { data: pub } = supabase.storage.from("location-scan-photos").getPublicUrl(path);
+          if (pub?.publicUrl) imageUrls.push(pub.publicUrl);
+        } else {
+          console.error("photo upload failed", upErr.message);
+        }
+      }
+    } catch (e) {
+      console.error("photo upload failed", e);
     }
 
     const content: any[] = images.map((img) => ({
@@ -87,7 +109,7 @@ export async function POST(req: NextRequest) {
         }))
       : [];
 
-    return NextResponse.json({ items });
+    return NextResponse.json({ items, image_urls: imageUrls });
   } catch (e: any) {
     console.error("location-scan error", e);
     return NextResponse.json({ error: e.message || "Scan failed" }, { status: 500 });

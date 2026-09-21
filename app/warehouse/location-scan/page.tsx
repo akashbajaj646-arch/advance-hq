@@ -64,6 +64,7 @@ export default function LocationScanPage() {
   const [histRows, setHistRows] = useState<any[]>([]);
   const [histBusy, setHistBusy] = useState(false);
   const [revertingBatch, setRevertingBatch] = useState<string | null>(null);
+  const [scanImageUrls, setScanImageUrls] = useState<string[]>([]);
   const cameraRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
 
@@ -115,6 +116,7 @@ export default function LocationScanPage() {
         note: String(it.note || ""),
       }));
       setRows(items);
+      setScanImageUrls(Array.isArray(json.image_urls) ? json.image_urls : []);
       const kept = items.filter((r) => !r.crossed_out).length;
       setMsg(
         `Read ${items.length} line${items.length === 1 ? "" : "s"} (${kept} kept, ${items.length - kept} crossed out). Review, then save.`
@@ -192,7 +194,7 @@ export default function LocationScanPage() {
       const res = await fetch("/api/warehouse/location-scan/am-apply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ warehouse_id: warehouse, location: loc, changes }),
+        body: JSON.stringify({ warehouse_id: warehouse, location: loc, changes, image_urls: scanImageUrls }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Apply failed");
@@ -236,6 +238,7 @@ export default function LocationScanPage() {
   function resetAll() {
     setLocation("");
     setImages([]);
+    setScanImageUrls([]);
     setRows([]);
     setPreview(null);
     setApplyResult(null);
@@ -323,6 +326,19 @@ export default function LocationScanPage() {
                     <div style={{ fontSize: 12, color: "#666", margin: "2px 0 6px" }}>
                       {okCount} applied · {rows.length - okCount} other
                     </div>
+                    {Array.isArray(first.image_paths) && first.image_paths.length > 0 && (
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+                        {first.image_paths.map((u: string, k: number) => (
+                          <a key={k} href={u} target="_blank" rel="noreferrer">
+                            <img
+                              src={u}
+                              alt=""
+                              style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 6, border: "1px solid #eee" }}
+                            />
+                          </a>
+                        ))}
+                      </div>
+                    )}
                     {rows.map((r: any, i: number) => (
                       <div
                         key={i}

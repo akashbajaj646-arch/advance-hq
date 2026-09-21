@@ -11,6 +11,9 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const warehouseId = String(body.warehouse_id || "");
     const bin = String(body.location || "").trim().toUpperCase();
+    const imageUrls: string[] = Array.isArray(body.image_urls)
+      ? body.image_urls.filter((u: any) => typeof u === "string").slice(0, 20)
+      : [];
     const changes: any[] = Array.isArray(body.changes) ? body.changes : [];
     if (changes.length === 0) {
       return NextResponse.json({ error: "No changes" }, { status: 400 });
@@ -73,6 +76,7 @@ export async function POST(req: NextRequest) {
           new_location: r.newLocation,
           status: r.status,
           detail: r.detail || null,
+          image_paths: imageUrls,
         }))
       );
       if (logErr) console.error("change log insert failed", logErr);
