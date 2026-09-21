@@ -48,15 +48,19 @@ export async function amGetSkuWarehouse(skuId: string, warehouseId: string) {
   );
 }
 
-export async function amPutSkuWarehouseLocation(rowId: string, location: string) {
+export async function amPutSkuWarehouseLocation(rowId: string, location: string): Promise<string> {
   const res = await fetch(`${AM_JSON_BASE}/sku_warehouse/${rowId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...authParams(), location }),
   });
-  if (!res.ok) throw new Error(`AM PUT sku_warehouse/${rowId} -> HTTP ${res.status}`);
+  const text = await res.text().catch(() => "");
+  if (!res.ok) throw new Error(`AM PUT sku_warehouse/${rowId} -> HTTP ${res.status} ${text.slice(0, 200)}`);
   // No-op writes return 200 with empty body; caller must verify by re-reading.
+  return text;
 }
+
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ---- location string helpers ----
 export const segments = (loc: string) =>

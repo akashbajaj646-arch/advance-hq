@@ -206,6 +206,21 @@ export default function LocationScanPage() {
     }
   }
 
+  function startManual() {
+    setErr("");
+    setMsg("");
+    if (!/^[A-Z][0-9]+[A-F]$/.test(loc)) {
+      setErr("Enter the location first (e.g. A1A), then start manual entry.");
+      return;
+    }
+    setPreview(null);
+    setApplyResult(null);
+    setSaved(false);
+    setScanImageUrls([]);
+    setRows([{ sku: "", qty: "", crossed_out: false, note: "" }]);
+    setMsg(`Manual entry for ${loc}. Type each product ID, then save.`);
+  }
+
   async function loadHistory() {
     setHistBusy(true);
     try {
@@ -258,6 +273,8 @@ export default function LocationScanPage() {
   }
 
   function setRow(i: number, patch: Partial<Row>) {
+    setPreview(null);
+    setApplyResult(null);
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   }
 
@@ -457,6 +474,12 @@ export default function LocationScanPage() {
         {busy ? "Scanning…" : `Scan${images.length > 0 ? ` (${images.length})` : ""}`}
       </button>
 
+      {rows.length === 0 && (
+        <button type="button" onClick={startManual} style={{ ...btnSecondary, width: "100%", marginTop: 10 }}>
+          ✎ Enter products manually (no scan)
+        </button>
+      )}
+
       {err && <div style={boxErr}>{err}</div>}
       {msg && !err && <div style={boxOk}>{msg}</div>}
 
@@ -466,7 +489,7 @@ export default function LocationScanPage() {
             <span style={{ fontSize: 14, fontWeight: 700 }}>
               {WAREHOUSES.find((w) => w.id === warehouse)?.name} · {loc} · {keptRows.length} SKUs
             </span>
-            <button type="button" onClick={() => setRows((p) => [...p, { sku: "", qty: "", crossed_out: false, note: "" }])} style={btnLink}>
+            <button type="button" onClick={() => { setPreview(null); setApplyResult(null); setRows((p) => [...p, { sku: "", qty: "", crossed_out: false, note: "" }]); }} style={btnLink}>
               + Add row
             </button>
           </div>
@@ -488,7 +511,7 @@ export default function LocationScanPage() {
               <button type="button" title={r.crossed_out ? "Include" : "Exclude"} onClick={() => setRow(i, { crossed_out: !r.crossed_out })} style={{ ...iconBtn, background: r.crossed_out ? "#eee" : "#fff" }}>
                 {r.crossed_out ? "↩" : "✂"}
               </button>
-              <button type="button" onClick={() => setRows((prev) => prev.filter((_, idx) => idx !== i))} style={iconBtn}>
+              <button type="button" onClick={() => { setPreview(null); setApplyResult(null); setRows((prev) => prev.filter((_, idx) => idx !== i)); }} style={iconBtn}>
                 🗑
               </button>
             </div>

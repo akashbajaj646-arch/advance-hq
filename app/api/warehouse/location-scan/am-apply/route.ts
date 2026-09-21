@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { amGetSkuWarehouse, amPutSkuWarehouseLocation, mapLimit, sb, segmentsEqual } from "../am";
+import { amGetSkuWarehouse, amPutSkuWarehouseLocation, mapLimit, sb, segmentsEqual, sleep } from "../am";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -45,16 +45,26 @@ export async function POST(req: NextRequest) {
           };
         }
 
-        await amPutSkuWarehouseLocation(base.amRowId, base.newLocation);
-
-        // round-trip proof (no-op writes also return 200, so this is the only real check)
-        const after = await amGetSkuWarehouse(base.skuId, warehouseId);
-        const rowAfter = after.find((r: any) => String(r.id) === base.amRowId);
-        // AM normalizes location strings on save (spacing/trailing commas), so compare segments not raw text.
-        const verified = segmentsEqual(String(rowAfter?.location || ""), base.newLocation);
+        // Write, verify by re-read; on silent no-op, retry once after a pause (AM throttles bursts).
+        let amResponse = "";
+        let lastRead = "";
+        let verified = false;
+        for (let attempt = 0; attempt < 2 && !verified; attempt++) {
+          if (attempt > 0) await sleep(1200);
+          amResponse = await amPutSkuWarehouseLocation(base.amRowId, base.newLocation);
+          const after = await amGetSkuWarehouse(base.skuId, warehouseId);
+          const rowAfter = after.find((r: any) => String(r.id) === base.amRowId);
+          lastRead = String(rowAfter?.location || "");
+          // AM normalizes location strings on save (spacing/trailing commas), so compare segments not raw text.
+          verified = segmentsEqual(lastRead, base.newLocation);
+        }
         return verified
           ? { ...base, status: "ok" }
-          : { ...base, status: "error", detail: `write not reflected (reads "${rowAfter?.location}")` };
+          : {
+              ...base,
+              status: "error",
+              detail: `write not reflected after retry (reads "${lastRead}"; AM said: ${amResponse.slice(0, 200) || "empty response"})`,
+            };
       } catch (e: any) {
         return { ...base, status: "error", detail: e.message };
       }
