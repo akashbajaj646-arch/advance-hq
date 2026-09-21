@@ -11,7 +11,7 @@ const supabaseAdmin = createClient(
 const ALLOWED_TABLES = new Set([
   'customers', 'customer_locations', 'hq_contacts',
   'orders', 'order_items', 'invoices', 'invoice_items',
-  'pick_tickets', 'pick_ticket_items', 'shipments', 'shipment_boxes',
+  'pick_tickets', 'pick_ticket_items', 'pick_ticket_scans', 'shipments', 'shipment_boxes',
   'shipment_box_items', 'shipment_pallets', 'shipment_items',
   'products', 'product_skus', 'product_images', 'product_price_groups',
   'product_specs', 'product_bill_of_materials', 'product_prepacks',
