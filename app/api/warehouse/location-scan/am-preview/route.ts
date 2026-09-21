@@ -37,13 +37,18 @@ export async function POST(req: NextRequest) {
     const changes: Change[] = [];
     const flags: string[] = [];
 
+    const count = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) || 0) + 1);
+    const emptyLoc = new Map<string, number>();
+    const noRow = new Map<string, number>();
+    const pickableHit = new Map<string, number>();
+
     // 1) Resolve scanned styles -> sku_ids
     const presentSkuIds = new Set<string>();
     const skuStyle = new Map<string, string>();
     for (const style of styles) {
       const r = await skuIdsForStyle(style);
       if (r.skuIds.length === 0) {
-        flags.push(`${style}: no matching style found in inventory — skipped`);
+        flags.push(`${style}: no matching product found in inventory — skipped`);
         continue;
       }
       for (const id of r.skuIds) {
@@ -56,15 +61,13 @@ export async function POST(req: NextRequest) {
     await mapLimit(Array.from(presentSkuIds), 4, async (skuId) => {
       const rows = await amGetSkuWarehouse(skuId, warehouseId);
       if (rows.length === 0) {
-        flags.push(`${skuStyle.get(skuId)} sku ${skuId}: no sku_warehouse row in this warehouse`);
+        count(noRow, skuStyle.get(skuId) || "");
         return;
       }
       for (const row of rows) {
         const old = String(row.location || "");
         if (old.trim() === "") {
-          flags.push(
-            `${skuStyle.get(skuId)} sku ${skuId}: empty location (no pickable area on record) — set it manually first`
-          );
+          count(emptyLoc, skuStyle.get(skuId) || "");
           continue;
         }
         const next = withBoxAdded(old, bin);
@@ -96,7 +99,7 @@ export async function POST(req: NextRequest) {
       for (const row of rows) {
         const old = String(row.location || "");
         if (isPickableSegment(old, bin)) {
-          flags.push(`${style}: ${bin} is the PICKABLE segment ("${old}") — not touched, review manually`);
+          count(pickableHit, style);
           continue;
         }
         const next = withBoxRemoved(old, bin);
@@ -112,6 +115,17 @@ export async function POST(req: NextRequest) {
         }
       }
     });
+
+    const plural = (n: number) => `${n} SKU${n === 1 ? "" : "s"}`;
+    for (const [style, n] of Array.from(emptyLoc)) {
+      flags.push(`${style}: ${plural(n)} with empty location in AM (no pickable area to preserve) — set the pickable area in AM, then re-run`);
+    }
+    for (const [style, n] of Array.from(noRow)) {
+      flags.push(`${style}: ${plural(n)} with no location record in this warehouse`);
+    }
+    for (const [style, n] of Array.from(pickableHit)) {
+      flags.push(`${style}: ${bin} is the PICKABLE area for ${plural(n)} — not touched, review manually`);
+    }
 
     return NextResponse.json({
       bin,

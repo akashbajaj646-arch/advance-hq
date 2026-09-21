@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { amGet, amGetSkuWarehouse, amPutSkuWarehouseLocation, mapLimit } from "../am";
+import { amGetSkuWarehouse, amPutSkuWarehouseLocation, mapLimit, sb, segmentsEqual } from "../am";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -10,6 +10,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const warehouseId = String(body.warehouse_id || "");
+    const bin = String(body.location || "").trim().toUpperCase();
     const changes: any[] = Array.isArray(body.changes) ? body.changes : [];
     if (changes.length === 0) {
       return NextResponse.json({ error: "No changes" }, { status: 400 });
@@ -21,8 +22,10 @@ export async function POST(req: NextRequest) {
     const results = await mapLimit(changes, 3, async (c) => {
       const base = {
         skuId: String(c.skuId),
+        style: String(c.style || ""),
         amRowId: String(c.amRowId),
         action: c.action,
+        oldLocation: String(c.oldLocation),
         newLocation: String(c.newLocation),
       };
       try {
@@ -44,7 +47,8 @@ export async function POST(req: NextRequest) {
         // round-trip proof (no-op writes also return 200, so this is the only real check)
         const after = await amGetSkuWarehouse(base.skuId, warehouseId);
         const rowAfter = after.find((r: any) => String(r.id) === base.amRowId);
-        const verified = String(rowAfter?.location || "") === base.newLocation;
+        // AM normalizes location strings on save (spacing/trailing commas), so compare segments not raw text.
+        const verified = segmentsEqual(String(rowAfter?.location || ""), base.newLocation);
         return verified
           ? { ...base, status: "ok" }
           : { ...base, status: "error", detail: `write not reflected (reads "${rowAfter?.location}")` };
@@ -53,8 +57,32 @@ export async function POST(req: NextRequest) {
       }
     });
 
+    // Audit log — one row per attempted change, grouped by batch.
+    const batchId = crypto.randomUUID();
+    try {
+      const { error: logErr } = await sb().from("location_change_log").insert(
+        results.map((r: any) => ({
+          batch_id: batchId,
+          warehouse_id: Number(warehouseId),
+          bin,
+          style: r.style || null,
+          sku_id: r.skuId,
+          am_row_id: r.amRowId,
+          action: r.action,
+          old_location: r.oldLocation,
+          new_location: r.newLocation,
+          status: r.status,
+          detail: r.detail || null,
+        }))
+      );
+      if (logErr) console.error("change log insert failed", logErr);
+    } catch (e) {
+      console.error("change log insert failed", e);
+    }
+
     const ok = results.filter((r) => r.status === "ok").length;
     return NextResponse.json({
+      batch_id: batchId,
       applied: ok,
       skipped: results.filter((r) => r.status === "skipped_drift").length,
       errors: results.filter((r) => r.status === "error").length,

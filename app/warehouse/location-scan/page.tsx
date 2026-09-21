@@ -60,6 +60,10 @@ export default function LocationScanPage() {
   const [applyResult, setApplyResult] = useState<any>(null);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+  const [histRows, setHistRows] = useState<any[]>([]);
+  const [histBusy, setHistBusy] = useState(false);
+  const [revertingBatch, setRevertingBatch] = useState<string | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
 
@@ -188,7 +192,7 @@ export default function LocationScanPage() {
       const res = await fetch("/api/warehouse/location-scan/am-apply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ warehouse_id: warehouse, changes }),
+        body: JSON.stringify({ warehouse_id: warehouse, location: loc, changes }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Apply failed");
@@ -198,6 +202,35 @@ export default function LocationScanPage() {
     } finally {
       setApplying(false);
     }
+  }
+
+  async function loadHistory() {
+    setHistBusy(true);
+    try {
+      const res = await fetch("/api/warehouse/location-scan/history");
+      const json = await res.json();
+      setHistRows(json.rows || []);
+    } catch {}
+    setHistBusy(false);
+  }
+
+  async function revertBatch(batchId: string) {
+    if (!window.confirm("Revert every applied change in this batch back to its previous location?")) return;
+    setRevertingBatch(batchId);
+    setErr("");
+    try {
+      const res = await fetch("/api/warehouse/location-scan/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ batch_id: batchId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Revert failed");
+      await loadHistory();
+    } catch (e: any) {
+      setErr(e.message || "Revert failed");
+    }
+    setRevertingBatch(null);
   }
 
   function resetAll() {
@@ -227,10 +260,92 @@ export default function LocationScanPage() {
 
   return (
     <div style={{ maxWidth: 560, margin: "0 auto", padding: "16px 14px 90px" }}>
-      <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>Box Location Update</h1>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>Box Location Update</h1>
+        <button
+          type="button"
+          onClick={() => {
+            const n = !showHistory;
+            setShowHistory(n);
+            if (n) loadHistory();
+          }}
+          style={btnLink}
+        >
+          {showHistory ? "Close history" : "History"}
+        </button>
+      </div>
       <p style={{ fontSize: 13, color: "#666", marginBottom: 14 }}>
         Pick the warehouse, enter the bin, photograph the pallet papers, scan, save, then push to AM.
       </p>
+
+      {showHistory && (
+        <div style={{ marginBottom: 20 }}>
+          {histBusy ? (
+            <div style={{ fontSize: 13, color: "#666" }}>Loading history…</div>
+          ) : (
+            (() => {
+              const batches = new Map<string, any[]>();
+              for (const r of histRows) {
+                if (!batches.has(r.batch_id)) batches.set(r.batch_id, []);
+                batches.get(r.batch_id)!.push(r);
+              }
+              if (batches.size === 0)
+                return <div style={{ fontSize: 13, color: "#666" }}>No changes logged yet.</div>;
+              return Array.from(batches.entries()).map(([bid, rows]) => {
+                const first = rows[0];
+                const okCount = rows.filter((r: any) => r.status === "ok").length;
+                const fullyReverted =
+                  okCount > 0 && rows.every((r: any) => r.status !== "ok" || r.reverted_at);
+                const d = new Date(first.created_at);
+                return (
+                  <div
+                    key={bid}
+                    style={{ border: "1px solid #eee", borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <b style={{ fontSize: 13 }}>
+                        {first.bin} · {Number(first.warehouse_id) === 1 ? "Leuning St" : "State St"} ·{" "}
+                        {d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                      </b>
+                      {fullyReverted ? (
+                        <span style={{ fontSize: 12, color: "#999" }}>reverted</span>
+                      ) : okCount > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => revertBatch(bid)}
+                          disabled={revertingBatch === bid}
+                          style={{ ...btnLink, color: "#a12622" }}
+                        >
+                          {revertingBatch === bid ? "Reverting…" : "Revert"}
+                        </button>
+                      ) : null}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#666", margin: "2px 0 6px" }}>
+                      {okCount} applied · {rows.length - okCount} other
+                    </div>
+                    {rows.map((r: any, i: number) => (
+                      <div
+                        key={i}
+                        style={{
+                          fontSize: 12,
+                          padding: "3px 0",
+                          borderTop: "1px solid #f5f5f5",
+                          opacity: r.reverted_at ? 0.5 : 1,
+                        }}
+                      >
+                        <b>{r.style || `sku ${r.sku_id}`}</b> [{r.action}]{" "}
+                        <span style={{ color: "#999" }}>{r.old_location}</span> → {r.new_location}
+                        {r.status !== "ok" && <span style={{ color: "#a12622" }}> ({r.status})</span>}
+                        {r.reverted_at && <span style={{ color: "#999" }}> (reverted)</span>}
+                      </div>
+                    ))}
+                  </div>
+                );
+              });
+            })()
+          )}
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
         {WAREHOUSES.map((w) => (
@@ -424,7 +539,7 @@ export default function LocationScanPage() {
                 .filter((r: any) => r.status !== "ok")
                 .map((r: any, i: number) => (
                   <div key={i} style={{ fontSize: 12, color: "#a12622", marginTop: 6 }}>
-                    sku {r.skuId}: {r.status} — {r.detail}
+                    {r.style || `sku ${r.skuId}`}: {r.status} {r.detail ? `(${r.detail})` : ""}
                   </div>
                 ))}
             </div>

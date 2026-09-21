@@ -84,6 +84,13 @@ export function withBoxRemoved(loc: string, bin: string): string | null {
   return joinSegments([pick, ...rest.filter((s) => s !== bin)]);
 }
 
+/** Compare two location strings by their parsed segments (AM normalizes strings on save). */
+export function segmentsEqual(a: string, b: string): boolean {
+  const sa = segments(a);
+  const sb = segments(b);
+  return sa.length === sb.length && sa.every((v, i) => v === sb[i]);
+}
+
 export function isPickableSegment(loc: string, bin: string): boolean {
   const segs = segments(loc);
   return segs.length > 0 && segs[0] === bin;
