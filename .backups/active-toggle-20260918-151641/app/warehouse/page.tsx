@@ -160,46 +160,6 @@ export default function WarehousePage() {
     return [...map.entries()].map(([id, name]) => ({ id, name }));
   })();
 
-  // ── Active/inactive controls (admin + manager only) ──
-  const [myRole, setMyRole] = useState('');
-  const canEditActive = myRole === 'admin' || myRole === 'manager';
-  const [activeSaving, setActiveSaving] = useState(false);
-  const [activeError, setActiveError] = useState('');
-
-  useEffect(() => {
-    fetch('/api/auth/me').then(r => r.json()).then(d => setMyRole(d?.user?.role || '')).catch(() => {});
-  }, []);
-
-  async function setActive(target: { sku_ids?: string[]; product_id?: string }, active: boolean, confirmMsg?: string) {
-    if (activeSaving) return;
-    if (confirmMsg && !window.confirm(confirmMsg)) return;
-    setActiveSaving(true);
-    setActiveError('');
-    try {
-      const res = await fetch('/api/warehouse/update-active', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...target, active }),
-      });
-      const data = await res.json();
-      const updated: string[] = data.updated || [];
-      if (updated.length > 0) {
-        setDetail((d: any) => d ? {
-          ...d,
-          skus: (d.skus || []).map((s: any) => updated.includes(s.sku_id) ? { ...s, is_active: active } : s),
-        } : d);
-      }
-      if (!res.ok || !data.success) {
-        const failedCount = (data.failed || []).length;
-        setActiveError(data.error || (failedCount ? `${failedCount} SKU(s) failed: ${data.failed[0].reason}` : 'Update failed'));
-      }
-    } catch {
-      setActiveError('Network error');
-    } finally {
-      setActiveSaving(false);
-    }
-  }
-
   function binsFor(skuId: string) {
     return (detail?.warehouse_locations || []).filter((w: any) => w.sku_id === skuId);
   }
@@ -340,35 +300,11 @@ export default function WarehousePage() {
                 </button>
 
                 <div className="bg-white rounded-xl border border-gray-200 p-4">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div>
-                      <h2 className="text-2xl font-bold text-gray-900">{detail.product.style_number}</h2>
-                      <p className="text-gray-500 mt-0.5">{detail.product.description || ''}</p>
-                      {detail.product.category && (
-                        <span className="inline-block mt-2 px-2 py-0.5 bg-gray-100 rounded text-sm text-gray-600">{detail.product.category}</span>
-                      )}
-                    </div>
-                    {canEditActive && (detail.skus || []).length > 0 && (
-                      (detail.skus || []).every((s: any) => s.is_active === false) ? (
-                        <button
-                          onClick={() => setActive({ product_id: detail.product.product_id }, true, `Reactivate every SKU on ${detail.product.style_number}?`)}
-                          disabled={activeSaving}
-                          className="px-4 py-2 rounded-lg border-2 border-green-600 text-green-700 text-sm font-semibold disabled:opacity-50"
-                        >
-                          {activeSaving ? 'Working…' : 'Activate product'}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => setActive({ product_id: detail.product.product_id }, false, `Deactivate ALL SKUs on ${detail.product.style_number} in ApparelMagic?`)}
-                          disabled={activeSaving}
-                          className="px-4 py-2 rounded-lg border-2 border-red-500 text-red-600 text-sm font-semibold disabled:opacity-50"
-                        >
-                          {activeSaving ? 'Working…' : 'Deactivate product'}
-                        </button>
-                      )
-                    )}
-                  </div>
-                  {activeError && <p className="text-sm text-red-600 mt-2">{activeError}</p>}
+                  <h2 className="text-2xl font-bold text-gray-900">{detail.product.style_number}</h2>
+                  <p className="text-gray-500 mt-0.5">{detail.product.description || ''}</p>
+                  {detail.product.category && (
+                    <span className="inline-block mt-2 px-2 py-0.5 bg-gray-100 rounded text-sm text-gray-600">{detail.product.category}</span>
+                  )}
                 </div>
 
                 {/* Color selector */}
@@ -422,27 +358,6 @@ export default function WarehousePage() {
 
                 {/* Size / inventory / bins */}
                 <div className="space-y-3">
-                  {canEditActive && selectedColor && colorSkus.length > 0 && (
-                    <div className="flex justify-end">
-                      {colorSkus.every((s: any) => s.is_active === false) ? (
-                        <button
-                          onClick={() => setActive({ sku_ids: colorSkus.map((s: any) => s.sku_id) }, true, `Reactivate all ${selectedColor} SKUs?`)}
-                          disabled={activeSaving}
-                          className="text-sm font-semibold text-green-700 px-2 py-1 disabled:opacity-50"
-                        >
-                          Activate all {selectedColor}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => setActive({ sku_ids: colorSkus.map((s: any) => s.sku_id) }, false, `Deactivate all ${selectedColor} SKUs in ApparelMagic?`)}
-                          disabled={activeSaving}
-                          className="text-sm font-semibold text-red-600 px-2 py-1 disabled:opacity-50"
-                        >
-                          Deactivate all {selectedColor}
-                        </button>
-                      )}
-                    </div>
-                  )}
                   {colorSkus.length === 0 && (
                     <div className="bg-white rounded-xl border border-gray-200 p-6 text-center text-gray-400">No SKUs for this color</div>
                   )}
@@ -460,15 +375,6 @@ export default function WarehousePage() {
                             <p className="text-xs text-gray-400 font-mono mt-0.5">{sku.sku_id}{sku.upc ? ` · UPC ${sku.upc}` : ''}</p>
                             {isHighlighted && <p className="text-xs font-semibold text-brand-600 mt-1">Scanned item</p>}
                             {sku.is_active === false && <p className="text-xs font-semibold text-red-500 mt-1">Inactive SKU</p>}
-                            {canEditActive && (
-                              <button
-                                onClick={() => setActive({ sku_ids: [sku.sku_id] }, sku.is_active === false)}
-                                disabled={activeSaving}
-                                className={`text-xs font-semibold mt-1 px-2 py-1 -ml-2 disabled:opacity-50 ${sku.is_active === false ? 'text-green-700' : 'text-red-600'}`}
-                              >
-                                {sku.is_active === false ? 'Activate' : 'Deactivate'}
-                              </button>
-                            )}
                           </div>
                           <div className="flex gap-5 text-right">
                             <div>

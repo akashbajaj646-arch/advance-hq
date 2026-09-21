@@ -1,10 +1,8 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-// Routes that don't require auth. /api/cron/ MUST stay in this list:
-// Vercel cron invocations carry no session cookie, so gating them behind
-// auth silently kills every scheduled sync.
-const PUBLIC_PATHS = ["/api/admin/", "/api/cron/", '/login', '/signup', '/api/auth/login', '/api/auth/signup', '/api/auth/bootstrap', '/api/auth/me'];
+// Routes that don't require auth
+const PUBLIC_PATHS = ["/api/admin/", '/login', '/signup', '/api/auth/login', '/api/auth/signup', '/api/auth/bootstrap', '/api/auth/me'];
 
 // Paths a warehouse-role user is allowed to touch. Everything else redirects
 // to /warehouse (pages) or returns 403 (APIs). The role comes from the

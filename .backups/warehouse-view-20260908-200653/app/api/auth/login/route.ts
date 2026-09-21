@@ -41,20 +41,6 @@ export async function POST(request: Request) {
     });
 
     response.cookies.set(setSessionCookie(token));
-
-    // Role cookie: lets middleware confine warehouse accounts without a DB
-    // lookup on every request. Overwritten on every login, so a shared
-    // device always reflects the current user's role.
-    response.cookies.set({
-      name: 'ahq_role',
-      value: user.role || 'viewer',
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-      path: '/',
-      maxAge: 60 * 60 * 24 * 30,
-    });
-
     return response;
   } catch (error) {
     console.error('Login error:', error);

@@ -45,6 +45,7 @@ export const MODULES: ModuleDef[] = [
   { key: 'shipping', label: 'Shipping Module', prefixes: ['/shipping'] },
   { key: 'pick-tickets', label: 'Pick Tickets', prefixes: ['/pick-tickets'] },
   { key: 'warehouse', label: 'Warehouse', prefixes: ['/warehouse'], apiPrefixes: ['/api/warehouse'] },
+  { key: 'box-location-update', label: 'Box Location Update', prefixes: ['/warehouse/location-scan'], apiPrefixes: ['/api/warehouse/location-scan'] },
   { key: 'reports', label: 'Reports', prefixes: ['/reports'] },
   { key: 'sync', label: 'Sync Center', prefixes: ['/sync'] },
   { key: 'activity', label: 'Activity', prefixes: ['/activity'] },
