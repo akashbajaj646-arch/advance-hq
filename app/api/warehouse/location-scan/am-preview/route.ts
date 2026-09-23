@@ -9,13 +9,14 @@ import {
   syncedRowsMentioningBin,
   withBoxAdded,
   withBoxRemoved,
+  withPickableSet,
 } from "../am";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export type Change = {
-  action: "add" | "remove";
+  action: "add" | "remove" | "pickable";
   style: string;
   skuId: string;
   amRowId: string;
@@ -31,6 +32,7 @@ export async function POST(req: NextRequest) {
     const warehouseId = String(body.warehouse_id || "");
     const bin = String(body.location || "").trim().toUpperCase();
     const styles: string[] = Array.isArray(body.styles) ? body.styles : [];
+    const mode: "box" | "pickable" = body.mode === "pickable" ? "pickable" : "box";
     if (!["1", "2"].includes(warehouseId) || !bin) {
       return NextResponse.json({ error: "warehouse_id and location required" }, { status: 400 });
     }
@@ -67,6 +69,20 @@ export async function POST(req: NextRequest) {
       }
       for (const row of rows) {
         const old = String(row.location || "");
+        if (mode === "pickable") {
+          const next = withPickableSet(old, bin);
+          if (next) {
+            changes.push({
+              action: "pickable",
+              style: skuStyle.get(skuId) || "",
+              skuId,
+              amRowId: String(row.id),
+              oldLocation: old,
+              newLocation: next,
+            });
+          }
+          continue;
+        }
         if (old.trim() === "") {
           count(emptyLoc, skuStyle.get(skuId) || "");
           continue;
@@ -85,8 +101,8 @@ export async function POST(req: NextRequest) {
       }
     });
 
-    // 3) REMOVALS: SKUs in this warehouse whose location mentions the bin but were NOT scanned
-    const candidates = await syncedRowsMentioningBin(warehouseId, bin);
+    // 3) REMOVALS: box mode only. In pickable mode, absence from a shelf never wipes a pickable assignment.
+    const candidates = mode === "pickable" ? [] : await syncedRowsMentioningBin(warehouseId, bin);
     const removalSkuIds = candidates
       .map((c) => c.skuId)
       .filter((id) => !presentSkuIds.has(id));
@@ -128,16 +144,16 @@ export async function POST(req: NextRequest) {
       flags.push(`${style}: ${bin} is the PICKABLE area for ${plural(n)} — not touched, review manually`);
     }
 
-    const adds = changes.filter((c) => c.action === "add");
+    const adds = changes.filter((c) => c.action === "add" || c.action === "pickable");
     const removals = changes.filter((c) => c.action === "remove");
     await logActivity({
       event: "preview",
       warehouse_id: Number(warehouseId),
       bin,
-      summary: { adds: adds.length, removals: removals.length, flags },
+      summary: { mode, adds: adds.length, removals: removals.length, flags },
     });
 
-    return NextResponse.json({ bin, warehouse_id: warehouseId, adds, removals, flags });
+    return NextResponse.json({ bin, warehouse_id: warehouseId, mode, adds, removals, flags });
   } catch (e: any) {
     return NextResponse.json({ error: e.message || "preview failed" }, { status: 500 });
   }

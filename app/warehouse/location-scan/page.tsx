@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Row = { sku: string; qty: string; crossed_out: boolean; note: string; heard?: string; voiceSku?: string };
 type Img = { name: string; dataUrl: string };
@@ -66,6 +66,7 @@ export default function LocationScanPage() {
   const [histBusy, setHistBusy] = useState(false);
   const [revertingBatch, setRevertingBatch] = useState<string | null>(null);
   const [scanImageUrls, setScanImageUrls] = useState<string[]>([]);
+  const [mode, setMode] = useState<"box" | "pickable">("box");
   const [voiceMode, setVoiceMode] = useState(false);
   const [recording, setRecording] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(0);
@@ -75,6 +76,35 @@ export default function LocationScanPage() {
   const filesRef = useRef<HTMLInputElement>(null);
 
   const loc = location.trim().toUpperCase();
+
+  useEffect(() => {
+    if (!/^[A-Z][0-9]+[A-F]$/.test(loc)) return;
+    const def: "box" | "pickable" = "CDEF".includes(loc[loc.length - 1]) ? "pickable" : "box";
+    let alive = true;
+    setMode(def);
+    fetch(`/api/warehouse/location-scan/mode?bin=${loc}`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (alive && (j.mode === "box" || j.mode === "pickable")) setMode(j.mode);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [loc]);
+
+  function chooseMode(m: "box" | "pickable") {
+    setMode(m);
+    setPreview(null);
+    setApplyResult(null);
+    if (/^[A-Z][0-9]+[A-F]$/.test(loc)) {
+      fetch("/api/warehouse/location-scan/mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bin: loc, mode: m }),
+      }).catch(() => {});
+    }
+  }
   const keptRows = rows.filter((r) => !r.crossed_out && r.sku.trim() !== "");
 
   async function addFiles(list: FileList | null) {
@@ -180,6 +210,7 @@ export default function LocationScanPage() {
         body: JSON.stringify({
           warehouse_id: warehouse,
           location: loc,
+          mode,
           styles: keptRows.map((r) => r.sku.trim().toUpperCase()),
         }),
       });
@@ -611,6 +642,50 @@ export default function LocationScanPage() {
         }}
       />
 
+      {/^[A-Z][0-9]+[A-F]$/.test(loc) && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => chooseMode("box")}
+              style={{
+                flex: 1,
+                padding: "9px 8px",
+                fontSize: 13,
+                fontWeight: 700,
+                borderRadius: 9,
+                border: mode === "box" ? "2px solid #111" : "1px solid #ddd",
+                background: mode === "box" ? "#111" : "#fff",
+                color: mode === "box" ? "#fff" : "#111",
+              }}
+            >
+              📦 Box level
+            </button>
+            <button
+              type="button"
+              onClick={() => chooseMode("pickable")}
+              style={{
+                flex: 1,
+                padding: "9px 8px",
+                fontSize: 13,
+                fontWeight: 700,
+                borderRadius: 9,
+                border: mode === "pickable" ? "2px solid #0a58ca" : "1px solid #ddd",
+                background: mode === "pickable" ? "#0a58ca" : "#fff",
+                color: mode === "pickable" ? "#fff" : "#111",
+              }}
+            >
+              🖐 Pickable shelf
+            </button>
+          </div>
+          <p style={{ fontSize: 11, color: "#888", margin: "6px 2px 0" }}>
+            {mode === "pickable"
+              ? `Pickable: ${loc} becomes each product's pick spot (first segment). No removals in this mode.`
+              : `Box: ${loc} is added after the comma; unscanned products lose ${loc}. Flip if this rack is a pickable shelf — your choice is remembered for this bin.`}
+          </p>
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
         <button type="button" onClick={() => cameraRef.current?.click()} style={btnSecondary}>
           📷 Take photo
@@ -789,8 +864,22 @@ export default function LocationScanPage() {
             AM changes for {loc} — {WAREHOUSES.find((w) => w.id === warehouse)?.name}
           </h2>
 
-          <ChangeList title={`Adds (${preview.adds.length})`} color="#1e6b2e" items={preview.adds} />
-          <ChangeList title={`Removals (${preview.removals.length})`} color="#a12622" items={preview.removals} />
+          <ChangeList
+            title={
+              (preview as any).mode === "pickable"
+                ? `Pickable updates (${preview.adds.length})`
+                : `Adds (${preview.adds.length})`
+            }
+            color={(preview as any).mode === "pickable" ? "#0a58ca" : "#1e6b2e"}
+            items={preview.adds}
+          />
+          {(preview as any).mode === "pickable" ? (
+            <p style={{ fontSize: 12, color: "#888", margin: "0 0 12px" }}>
+              Removals are disabled in pickable mode.
+            </p>
+          ) : (
+            <ChangeList title={`Removals (${preview.removals.length})`} color="#a12622" items={preview.removals} />
+          )}
 
           {preview.flags.length > 0 && (
             <div style={{ fontSize: 12, color: "#8a6d1a", background: "#fdf6e3", borderRadius: 8, padding: "8px 10px", marginTop: 10 }}>

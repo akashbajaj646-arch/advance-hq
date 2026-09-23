@@ -118,6 +118,15 @@ export function segmentsEqual(a: string, b: string): boolean {
   return sa.length === sb.length && sa.every((v, i) => v === sb[i]);
 }
 
+/** Set bin as the pickable (first) segment, keeping box segments. Returns null if no change. */
+export function withPickableSet(loc: string, bin: string): string | null {
+  const segs = segments(loc);
+  if (segs.length === 0) return bin;
+  if (segs[0] === bin) return null;
+  const rest = segs.slice(1).filter((s) => s !== bin);
+  return joinSegments([bin, ...rest]);
+}
+
 export function isPickableSegment(loc: string, bin: string): boolean {
   const segs = segments(loc);
   return segs.length > 0 && segs[0] === bin;
