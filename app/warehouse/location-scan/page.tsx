@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 
-type Row = { sku: string; qty: string; crossed_out: boolean; note: string };
+type Row = { sku: string; qty: string; crossed_out: boolean; note: string; heard?: string; voiceSku?: string };
 type Img = { name: string; dataUrl: string };
 type Change = {
   action: "add" | "remove";
@@ -66,6 +66,11 @@ export default function LocationScanPage() {
   const [histBusy, setHistBusy] = useState(false);
   const [revertingBatch, setRevertingBatch] = useState<string | null>(null);
   const [scanImageUrls, setScanImageUrls] = useState<string[]>([]);
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(0);
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const recRef = useRef<MediaRecorder | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
 
@@ -148,6 +153,9 @@ export default function LocationScanPage() {
             sku: r.sku.trim().toUpperCase(),
             qty: r.qty.trim() === "" ? null : Number(r.qty),
           })),
+          voice_corrections: rows
+            .filter((r) => r.heard && r.voiceSku && r.sku.trim() !== "" && r.sku.trim().toUpperCase() !== r.voiceSku)
+            .map((r) => ({ heard: r.heard, chosen: r.sku.trim().toUpperCase() })),
         }),
       });
       const json = await res.json();
@@ -208,6 +216,120 @@ export default function LocationScanPage() {
     }
   }
 
+  async function voiceStart() {
+    setErr("");
+    setMsg("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      voiceStreamRef.current = stream;
+      setVoiceMode(true);
+      setMsg(
+        /^[A-Z][0-9]+[A-F]$/.test(loc)
+          ? `Voice entry for ${loc}. Hold the button, say one box at a time.`
+          : "Voice entry on. Say the bin location first (e.g. \"X4C\"), then products."
+      );
+    } catch {
+      setErr("Microphone access denied. Allow the mic for this site in browser settings.");
+    }
+  }
+
+  function voiceStop() {
+    voiceStreamRef.current?.getTracks().forEach((t) => t.stop());
+    voiceStreamRef.current = null;
+    recRef.current = null;
+    setVoiceMode(false);
+    setRecording(false);
+  }
+
+  function holdStart(e: React.SyntheticEvent) {
+    e.preventDefault();
+    if (recording || !voiceStreamRef.current) return;
+    let mime = "";
+    if (typeof MediaRecorder !== "undefined") {
+      if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) mime = "audio/webm;codecs=opus";
+      else if (MediaRecorder.isTypeSupported("audio/mp4")) mime = "audio/mp4";
+    }
+    const rec = mime
+      ? new MediaRecorder(voiceStreamRef.current, { mimeType: mime })
+      : new MediaRecorder(voiceStreamRef.current);
+    const chunks: BlobPart[] = [];
+    rec.ondataavailable = (ev) => {
+      if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+    };
+    rec.onstop = () => processUtterance(new Blob(chunks, { type: rec.mimeType || mime || "audio/webm" }));
+    recRef.current = rec;
+    rec.start();
+    setRecording(true);
+  }
+
+  function holdEnd(e: React.SyntheticEvent) {
+    e.preventDefault();
+    if (recRef.current && recRef.current.state !== "inactive") recRef.current.stop();
+    setRecording(false);
+  }
+
+  async function processUtterance(blob: Blob) {
+    if (blob.size < 2000) return; // accidental tap
+    setVoiceBusy((n) => n + 1);
+    try {
+      const b64: string = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res((r.result as string).split(",")[1]);
+        r.onerror = () => rej(new Error("read failed"));
+        r.readAsDataURL(blob);
+      });
+      const res = await fetch("/api/warehouse/location-scan/voice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio: b64, mime: blob.type, location: loc, warehouse_id: warehouse }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Voice failed");
+      if (json.command === "undo_last") {
+        setRows((prev) => {
+          const revIdx = [...prev].reverse().findIndex((r) => r.heard);
+          if (revIdx === -1) return prev;
+          const cut = prev.length - 1 - revIdx;
+          return prev.filter((_, i) => i !== cut);
+        });
+        setMsg("Removed the last voice entry.");
+        return;
+      }
+      if (json.command === "set_location" && json.location) {
+        setLocation(String(json.location).toUpperCase());
+        setMsg(`Location set to ${json.location}.`);
+        return;
+      }
+      const incoming: Row[] = (json.rows || []).map((r: any) => {
+        const sku = String(r.sku || "").toUpperCase();
+        const conf = Number(r.confidence) || 0;
+        return {
+          sku,
+          qty: r.qty == null ? "" : String(r.qty),
+          crossed_out: false,
+          heard: String(r.heard || json.transcript || ""),
+          voiceSku: sku,
+          note: !sku
+            ? `heard "${r.heard || json.transcript}" — no product match, fix by hand`
+            : conf < 0.85
+              ? `heard "${r.heard}" (${Math.round(conf * 100)}% match)`
+              : "",
+        };
+      });
+      if (incoming.length > 0) {
+        setPreview(null);
+        setApplyResult(null);
+        setRows((prev) => [...prev, ...incoming]);
+      } else {
+        setMsg(`Heard: "${json.transcript}" — nothing matched, try again.`);
+      }
+    } catch (e: any) {
+      setErr(e.message || "Voice failed");
+    } finally {
+      setVoiceBusy((n) => n - 1);
+    }
+  }
+
   function startManual() {
     setErr("");
     setMsg("");
@@ -254,6 +376,7 @@ export default function LocationScanPage() {
   }
 
   function resetAll() {
+    voiceStop();
     setLocation("");
     setImages([]);
     setScanImageUrls([]);
@@ -540,10 +663,62 @@ export default function LocationScanPage() {
         {busy ? "Scanning…" : `Scan${images.length > 0 ? ` (${images.length})` : ""}`}
       </button>
 
-      {rows.length === 0 && (
-        <button type="button" onClick={startManual} style={{ ...btnSecondary, width: "100%", marginTop: 10 }}>
-          ✎ Enter products manually (no scan)
-        </button>
+      <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+        {rows.length === 0 && (
+          <button type="button" onClick={startManual} style={btnSecondary}>
+            ✎ Manual entry
+          </button>
+        )}
+        {!voiceMode && (
+          <button type="button" onClick={voiceStart} style={btnSecondary}>
+            🎤 Voice entry
+          </button>
+        )}
+      </div>
+
+      {voiceMode && (
+        <div style={{ marginTop: 12, padding: 14, border: "1px solid #ddd", borderRadius: 12, background: "#fff" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <span style={{ fontSize: 13, fontWeight: 700 }}>
+              Voice entry{loc ? ` · ${loc}` : ""}
+              {voiceBusy > 0 ? " · matching…" : ""}
+            </span>
+            <button type="button" onClick={voiceStop} style={btnLink}>
+              End voice
+            </button>
+          </div>
+          <button
+            type="button"
+            onTouchStart={holdStart}
+            onTouchEnd={holdEnd}
+            onTouchCancel={holdEnd}
+            onMouseDown={holdStart}
+            onMouseUp={holdEnd}
+            onMouseLeave={(e) => {
+              if (recording) holdEnd(e);
+            }}
+            onContextMenu={(e) => e.preventDefault()}
+            style={{
+              width: "100%",
+              padding: "26px 16px",
+              fontSize: 17,
+              fontWeight: 800,
+              borderRadius: 12,
+              border: "none",
+              background: recording ? "#a12622" : "#111",
+              color: "#fff",
+              touchAction: "none",
+              userSelect: "none",
+              WebkitUserSelect: "none",
+            }}
+          >
+            {recording ? "● Listening… release when done" : "Hold to talk"}
+          </button>
+          <p style={{ fontSize: 12, color: "#666", marginTop: 8, marginBottom: 0 }}>
+            One box at a time: "PAT thirty-two fifty-seven, three boxes". Say a bin like "X4C" to set the location.
+            Say "scratch that" to remove the last entry.
+          </p>
+        </div>
       )}
 
       {err && <div style={boxErr}>{err}</div>}

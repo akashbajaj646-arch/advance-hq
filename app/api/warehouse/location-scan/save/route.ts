@@ -34,7 +34,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    await logActivity({ event: "save", warehouse_id: warehouseId, bin: location, summary: { count: clean.length } });
+    // Voice self-training: log heard -> chosen pairs the user corrected at review.
+    const corrections: { heard: string; chosen: string }[] = Array.isArray(body.voice_corrections)
+      ? body.voice_corrections
+          .filter((c: any) => c && typeof c.heard === "string" && typeof c.chosen === "string" && c.heard && c.chosen)
+          .slice(0, 50)
+      : [];
+    if (corrections.length > 0) {
+      const { error: corrErr } = await supabase
+        .from("voice_corrections")
+        .insert(corrections.map((c) => ({ heard: c.heard.slice(0, 200), chosen: c.chosen.slice(0, 50).toUpperCase() })));
+      if (corrErr) console.error("voice corrections insert failed", corrErr.message);
+    }
+
+    await logActivity({ event: "save", warehouse_id: warehouseId, bin: location, summary: { count: clean.length, voice_corrections: corrections.length } });
 
     return NextResponse.json({ inserted: clean.length });
   } catch (e: any) {
