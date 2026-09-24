@@ -6,6 +6,7 @@ const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+const CHAT_MODEL = process.env.CHAT_MODEL || 'claude-sonnet-5';
 
 // ── Existing helper functions ──
 async function searchCustomers(query: string) {
@@ -266,7 +267,7 @@ export async function POST(request: Request) {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: CHAT_MODEL,
         max_tokens: 4096,
         system: SYSTEM_PROMPT,
         tools,
@@ -275,6 +276,7 @@ export async function POST(request: Request) {
     });
 
     let data = await response.json();
+    if (data?.type === 'error') throw new Error(`Anthropic API: ${data.error?.message || 'unknown error'}`);
     let iterations = 0;
     const MAX_ITERATIONS = 8;
 
@@ -304,7 +306,7 @@ export async function POST(request: Request) {
           'anthropic-version': '2023-06-01'
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          model: CHAT_MODEL,
           max_tokens: 4096,
           system: SYSTEM_PROMPT,
           tools,
@@ -313,6 +315,7 @@ export async function POST(request: Request) {
       });
 
       data = await response.json();
+    if (data?.type === 'error') throw new Error(`Anthropic API: ${data.error?.message || 'unknown error'}`);
     }
 
     const textContent = data.content?.find((block: any) => block.type === 'text');
