@@ -8,6 +8,19 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const CHAT_MODEL = process.env.CHAT_MODEL || 'claude-sonnet-5';
 
+export const maxDuration = 300;
+
+let schemaCache: string | null = null;
+async function getSchemaNote(): Promise<string> {
+  if (schemaCache !== null) return schemaCache;
+  try {
+    const r: any = await (executeTool as any)('query_database', { sql: "SELECT table_name, string_agg(column_name || ' ' || data_type, ', ' ORDER BY ordinal_position) AS cols FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN ('products','product_skus','inventory','invoices','invoice_items','orders','order_items','customers','pick_tickets','shipments') GROUP BY table_name" });
+    const rows = r?.data || [];
+    schemaCache = rows.length ? '\n\nLIVE DATABASE SCHEMA (use these exact column names; do not spend tool calls exploring the schema):\n' + rows.map((x: any) => `- ${x.table_name}: ${x.cols}`).join('\n') : '';
+  } catch { schemaCache = ''; }
+  return schemaCache;
+}
+
 // ── Existing helper functions ──
 async function searchCustomers(query: string) {
   const { data } = await supabase.from('customers').select('*').or(`customer_name.ilike.%${query}%,email.ilike.%${query}%,phone.ilike.%${query}%`).limit(5);
@@ -164,7 +177,7 @@ IMPORTANT NOTES:
 - Always use (void IS NULL OR void = false) when filtering invoices
 - Use invoices for revenue calculations (not orders) as invoices represent actual billed amounts
 - For product sales data, JOIN invoice_items with invoices on invoices.apparel_magic_id = invoice_items.apparel_magic_invoice_id
-- Limit results to 50 rows max for readability
+- Limit results to 200 rows max for readability
 - Always include ORDER BY for sorted results`,
     input_schema: {
       type: "object",
@@ -244,7 +257,7 @@ USING query_database:
 - Always filter invoices with (void IS NULL OR void = false)
 - Cast orders.total_amount::numeric when needed (it's TEXT in orders, NUMERIC in invoices)
 - Join invoice_items to invoices on invoices.apparel_magic_id = invoice_items.apparel_magic_invoice_id
-- Limit results to 50 rows for readability
+- Limit results to 200 rows for readability
 - If a query fails, try to fix it and retry
 
 TRACKING URLs:
@@ -268,8 +281,8 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         model: CHAT_MODEL,
-        max_tokens: 4096,
-        system: SYSTEM_PROMPT,
+        max_tokens: 8192,
+        system: SYSTEM_PROMPT + (await getSchemaNote()),
         tools,
         messages
       })
@@ -279,7 +292,7 @@ export async function POST(request: Request) {
     if (data?.type === 'error') throw new Error(`Anthropic API: ${data.error?.message || 'unknown error'}`);
     let lastToolNote = '';
     let iterations = 0;
-    const MAX_ITERATIONS = 8;
+    const MAX_ITERATIONS = 20;
 
     while (data.stop_reason === 'tool_use' && iterations < MAX_ITERATIONS) {
       iterations++;
@@ -309,8 +322,8 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           model: CHAT_MODEL,
-          max_tokens: 4096,
-          system: SYSTEM_PROMPT,
+          max_tokens: 8192,
+          system: SYSTEM_PROMPT + (await getSchemaNote()),
           tools,
           messages
         })
@@ -319,6 +332,16 @@ export async function POST(request: Request) {
       data = await response.json();
     if (data?.type === 'error') throw new Error(`Anthropic API: ${data.error?.message || 'unknown error'}`);
     }
+    if (data.stop_reason === 'tool_use') {
+      response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: CHAT_MODEL, max_tokens: 8192, system: SYSTEM_PROMPT + (await getSchemaNote()), tools, tool_choice: { type: 'none' }, messages })
+      });
+      data = await response.json();
+      if (data?.type === 'error') throw new Error(`Anthropic API: ${data.error?.message || 'unknown error'}`);
+    }
+
 
     const textContent = data.content?.find((block: any) => block.type === 'text');
     const assistantMessage = textContent?.text || `No text reply. stop_reason: ${data.stop_reason} | tool rounds: ${iterations} | last tool: ${lastToolNote || 'none'}`;
