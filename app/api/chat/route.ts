@@ -277,6 +277,7 @@ export async function POST(request: Request) {
 
     let data = await response.json();
     if (data?.type === 'error') throw new Error(`Anthropic API: ${data.error?.message || 'unknown error'}`);
+    let lastToolNote = '';
     let iterations = 0;
     const MAX_ITERATIONS = 8;
 
@@ -288,6 +289,7 @@ export async function POST(request: Request) {
       for (const toolUse of toolUseBlocks) {
         console.log(`[AI] Tool: ${toolUse.name}`, toolUse.name === 'query_database' ? toolUse.input.sql : toolUse.input);
         const result = await executeTool(toolUse.name, toolUse.input);
+        lastToolNote = `${toolUse.name}: ${JSON.stringify(result).slice(0, 400)}`;
         toolResults.push({
           type: "tool_result",
           tool_use_id: toolUse.id,
@@ -319,7 +321,7 @@ export async function POST(request: Request) {
     }
 
     const textContent = data.content?.find((block: any) => block.type === 'text');
-    const assistantMessage = textContent?.text || 'I apologize, but I was unable to generate a response.';
+    const assistantMessage = textContent?.text || `No text reply. stop_reason: ${data.stop_reason} | tool rounds: ${iterations} | last tool: ${lastToolNote || 'none'}`;
 
     return NextResponse.json({
       response: assistantMessage,
