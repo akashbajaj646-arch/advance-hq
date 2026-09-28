@@ -4,7 +4,23 @@ import type { NextRequest } from 'next/server';
 // Routes that don't require auth. /api/cron/ MUST stay in this list:
 // Vercel cron invocations carry no session cookie, so gating them behind
 // auth silently kills every scheduled sync.
-const PUBLIC_PATHS = ["/api/admin/", "/api/cron/", '/login', '/signup', '/api/auth/login', '/api/auth/signup', '/api/auth/bootstrap', '/api/auth/me'];
+// Customer-facing and unauthenticated routes. These are NOT internal HQ pages:
+// wholesale customers reach them with no HQ account, so gating them breaks the
+// storefront application form, payment links, and the Shopify account page.
+// If you rewrite this file, keep every entry below.
+const CUSTOMER_FACING_PATHS = [
+  '/account/payment-methods',   // customer payment page opened from a link
+  '/api/account/',              // payment methods + pay + Shopify extension
+  '/api/wholesale/apply',       // storefront wholesale application form
+];
+
+const PUBLIC_PATHS = [
+  ...CUSTOMER_FACING_PATHS,
+  '/api/track/', '/api/tickets/', '/support',
+  "/api/admin/", "/api/cron/",
+  '/login', '/signup',
+  '/api/auth/login', '/api/auth/signup', '/api/auth/bootstrap', '/api/auth/me',
+];
 
 // Paths a warehouse-role user is allowed to touch. Everything else redirects
 // to /warehouse (pages) or returns 403 (APIs). The role comes from the
@@ -14,6 +30,11 @@ const WAREHOUSE_ALLOWED_PREFIXES = ['/warehouse', '/api/warehouse', '/api/auth/'
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // CORS preflights carry no cookies, so never gate them on a session
+  if (request.method === 'OPTIONS') {
+    return NextResponse.next();
+  }
 
   // Allow public paths
   if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
