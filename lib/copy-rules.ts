@@ -1,10 +1,17 @@
-// Shared copy-rule settings + hard sanitizers for the Descriptions module.
+// Shared copy-rule settings + hard sanitizers for the Descriptions module (server-side).
 // Settings live in copy_settings (key/value jsonb):
-//   ban_em_dashes: boolean (default true)
-//   rules:         string[] — hard style requirements injected into every generation prompt
-//   examples:      { title, body }[] (max 5) — few-shot style references
+//   ban_em_dashes:       boolean (default true)
+//   quick_facts_enabled: boolean (default true) — append selected bullets to web descriptions
+//   rules:               string[] — hard style requirements injected into every generation prompt
+//   examples:            { title, body }[] (max 5) — few-shot style references
+//   web_desc_max_words:  number (default 80) — default word limit for the web description prose
+// Bullet bank lives in copy_bullets (group_name, text, sort, active).
+// Pure formatting helpers live in lib/copy-format.ts (client-safe) and are re-exported here.
 
 import { supabaseAdmin } from '@/lib/supabase-admin';
+import { stripEmDashes, parseWordLimit, DESC_WORDS_DEFAULT } from '@/lib/copy-format';
+
+export { stripEmDashes, cleanQuickFacts, stripTrailingFacts, composeWithFacts, composeHtml, htmlToText, normFact, clampAtWord, SEO_TITLE_MAX, SEO_DESC_MAX } from '@/lib/copy-format';
 
 export type CopyExample = { title: string; body: string };
 
@@ -13,6 +20,15 @@ export type CopySettings = {
   quick_facts_enabled: boolean;
   rules: string[];
   examples: CopyExample[];
+  web_desc_max_words: number;
+};
+
+export type CopyBullet = {
+  id: string;
+  group_name: string;
+  text: string;
+  sort: number;
+  active: boolean;
 };
 
 export async function loadCopySettings(): Promise<CopySettings> {
@@ -28,18 +44,32 @@ export async function loadCopySettings(): Promise<CopySettings> {
           .slice(0, 5)
           .map((e: any) => ({ title: String(e.title || ''), body: String(e.body) }))
       : [],
+    web_desc_max_words: parseWordLimit(map.web_desc_max_words) ?? DESC_WORDS_DEFAULT,
   };
 }
 
-/** Remove em/en dashes: digit ranges become hyphens, everything else becomes a comma. */
-export function stripEmDashes(text: string): string {
-  if (!text) return text;
-  return text
-    .replace(/(\d)\s*[\u2014\u2013]\s*(\d)/g, '$1-$2')
-    .replace(/\s*[\u2014\u2013]+\s*/g, ', ')
-    .replace(/,\s*,+/g, ',')
-    .replace(/ {2,}/g, ' ')
-    .trim();
+/** Bullet bank, ordered by sort then text. Returns [] if the table is missing or empty. */
+export async function loadBullets(activeOnly = true): Promise<CopyBullet[]> {
+  let q = supabaseAdmin
+    .from('copy_bullets')
+    .select('id,group_name,text,sort,active')
+    .order('sort', { ascending: true })
+    .order('text', { ascending: true });
+  if (activeOnly) q = q.eq('active', true);
+  const { data, error } = await q;
+  if (error || !data) return [];
+  return data as CopyBullet[];
+}
+
+/** Group bullets preserving sort order (group order = first appearance). */
+export function groupBullets(bullets: CopyBullet[]): { group: string; items: CopyBullet[] }[] {
+  const out: { group: string; items: CopyBullet[] }[] = [];
+  for (const b of bullets) {
+    let g = out.find(x => x.group === b.group_name);
+    if (!g) { g = { group: b.group_name, items: [] }; out.push(g); }
+    g.items.push(b);
+  }
+  return out;
 }
 
 /** Apply hard-enforced sanitizers to a single copy field. */
@@ -49,24 +79,11 @@ export function sanitizeCopy(text: string, settings: CopySettings): string {
   return out;
 }
 
-/** Normalize quick-fact lines: short, trimmed, deduped, max 6. */
-export function cleanQuickFacts(lines: any): string[] {
-  if (!Array.isArray(lines)) return [];
-  const out: string[] = [];
-  for (const l of lines) {
-    if (typeof l !== 'string') continue;
-    const t = l.replace(/^[-•*]\s*/, '').replace(/[.;,]\s*$/, '').trim();
-    if (t && !out.some(x => x.toLowerCase() === t.toLowerCase())) out.push(t);
-    if (out.length >= 6) break;
-  }
-  return out;
-}
-
-/** Append the quick-facts block to a web description if it isn't already present. */
+/** Legacy: append the quick-facts block if its lead line isn't already present. */
 export function ensureQuickFacts(webDescription: string, facts: string[]): string {
   const body = (webDescription || '').trim();
   if (!facts.length) return body;
   const marker = facts[0].toLowerCase();
-  if (body.toLowerCase().includes(marker)) return body; // block (or at least its lead line) already present
+  if (body.toLowerCase().includes(marker)) return body;
   return body + '\n\n' + facts.join('\n');
 }

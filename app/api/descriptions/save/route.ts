@@ -1,14 +1,23 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { getSession } from '@/lib/auth';
-import { loadCopySettings, sanitizeCopy } from '@/lib/copy-rules';
+import { loadCopySettings, sanitizeCopy, cleanQuickFacts } from '@/lib/copy-rules';
+import { normColorMode, parseWordLimit } from '@/lib/copy-format';
 
-// POST /api/descriptions/save  { product_id, updates: { keywords?, draft_description?, draft_web_title?, draft_web_description?, status? } }
+// POST /api/descriptions/save  { product_id, updates: { keywords?, seo_keywords?, draft_description?,
+//   draft_web_title?, draft_web_description?, draft_seo_title?, draft_seo_meta_description?,
+//   quick_facts?: string[], status? } }
 // Whitelisted fields only. status may only be set to 'skipped' or 'pending' (re-queue).
 
 export const dynamic = 'force-dynamic';
 
-const EDITABLE = ['keywords', 'draft_description', 'draft_web_title', 'draft_web_description'] as const;
+const EDITABLE = [
+  'keywords', 'seo_keywords',
+  'draft_description', 'draft_web_title', 'draft_web_description',
+  'draft_seo_title', 'draft_seo_meta_description', 'color_name',
+] as const;
+
+const SANITIZED = ['draft_description', 'draft_web_title', 'draft_web_description', 'draft_seo_title', 'draft_seo_meta_description'];
 
 function enforceFiveWords(s: string): string {
   return (s || '').trim().split(/\s+/).slice(0, 5).join(' ');
@@ -33,11 +42,17 @@ export async function POST(request: Request) {
       }
     }
     const settings = await loadCopySettings();
-    for (const f of ['draft_description', 'draft_web_title', 'draft_web_description']) {
+    for (const f of SANITIZED) {
       if (f in clean && clean[f]) clean[f] = sanitizeCopy(clean[f], settings) || null;
     }
     if ('draft_description' in clean && clean.draft_description) {
       clean.draft_description = enforceFiveWords(clean.draft_description);
+    }
+    if ('color_mode' in updates) clean.color_mode = normColorMode(updates.color_mode);
+    if ('desc_max_words' in updates) clean.desc_max_words = parseWordLimit(updates.desc_max_words);
+    if ('quick_facts' in updates) {
+      const facts = cleanQuickFacts(updates.quick_facts).map(f => sanitizeCopy(f, settings));
+      clean.quick_facts = facts.length ? facts : null;
     }
     if ('status' in updates) {
       if (!['skipped', 'pending'].includes(updates.status)) {

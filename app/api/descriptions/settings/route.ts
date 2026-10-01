@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { getSession } from '@/lib/auth';
 import { loadCopySettings } from '@/lib/copy-rules';
+import { parseWordLimit } from '@/lib/copy-format';
 
 // GET  /api/descriptions/settings → { ban_em_dashes, rules, examples }
 // POST /api/descriptions/settings  { ban_em_dashes?, rules?, examples? }  (admin only)
@@ -38,6 +39,12 @@ export async function POST(request: Request) {
 
     if ('quick_facts_enabled' in body) {
       writes.push({ key: 'quick_facts_enabled', value: !!body.quick_facts_enabled });
+    }
+
+    if ('web_desc_max_words' in body) {
+      const n = parseWordLimit(body.web_desc_max_words);
+      if (n == null) return NextResponse.json({ error: 'web_desc_max_words must be a positive number' }, { status: 400 });
+      writes.push({ key: 'web_desc_max_words', value: n });
     }
 
     if ('rules' in body) {

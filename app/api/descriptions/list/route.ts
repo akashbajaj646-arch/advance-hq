@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { getSession } from '@/lib/auth';
 
-// GET /api/descriptions/list?status=pending&search=dashiki&limit=100&offset=0
+// GET /api/descriptions/list?status=pending&search=dashiki&sort=newest|style&limit=100&offset=0
+// sort=newest orders by product_num desc (numeric AM product_id; AM ids increment, so newest products first).
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +25,7 @@ export async function GET(request: Request) {
     const invMin = Math.max(0, parseFloat(searchParams.get('inv_min') || '5') || 0);
     const limit = Math.min(200, Math.max(1, parseInt(searchParams.get('limit') || '100', 10)));
     const offset = Math.max(0, parseInt(searchParams.get('offset') || '0', 10));
+    const sort = searchParams.get('sort') === 'style' ? 'style' : 'newest';
 
     // Rows not yet re-scanned since the am_active column was added have null; treat null as active.
     const applyFilters = (q: any) => {
@@ -37,9 +39,11 @@ export async function GET(request: Request) {
     let query = supabaseAdmin
       .from('product_copy')
       .select('*')
-      .eq('status', status)
-      .order('style_number', { ascending: true })
-      .range(offset, offset + limit - 1);
+      .eq('status', status);
+    query = sort === 'newest'
+      ? query.order('product_num', { ascending: false, nullsFirst: false })
+      : query.order('style_number', { ascending: true });
+    query = query.range(offset, offset + limit - 1);
     query = applyFilters(query);
 
     if (search) {

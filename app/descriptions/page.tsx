@@ -1,6 +1,19 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { stripTrailingFacts, composeHtml, htmlToText, SEO_TITLE_MAX, SEO_DESC_MAX, COLOR_MODES, normColorMode, ColorMode, DESC_WORDS_DEFAULT, DESC_WORD_PRESETS, parseWordLimit, countWords } from '@/lib/copy-format';
+
+type Bullet = { id: string; group_name: string; text: string; sort: number; active: boolean };
+
+function groupBank(bank: Bullet[]): { group: string; items: Bullet[] }[] {
+  const out: { group: string; items: Bullet[] }[] = [];
+  for (const b of bank) {
+    let g = out.find(x => x.group === b.group_name);
+    if (!g) { g = { group: b.group_name, items: [] }; out.push(g); }
+    g.items.push(b);
+  }
+  return out;
+}
 
 type CopyRow = {
   product_id: string;
@@ -21,6 +34,15 @@ type CopyRow = {
   generation_error: string | null;
   push_error: string | null;
   pushed_at: string | null;
+  quick_facts: string[] | null;
+  seo_keywords: string | null;
+  draft_seo_title: string | null;
+  draft_seo_meta_description: string | null;
+  seo_pushed_at: string | null;
+  seo_push_error: string | null;
+  color_mode: string | null;
+  color_name: string | null;
+  desc_max_words: number | null;
   qty_inventory: number | null;
   qty_avail_sell: number | null;
 };
@@ -47,6 +69,7 @@ export default function DescriptionsPage() {
   const [filterCategory, setFilterCategory] = useState('');
   const [filterInvField, setFilterInvField] = useState('any');
   const [filterInvMin, setFilterInvMin] = useState('5');
+  const [sortBy, setSortBy] = useState<'newest' | 'style'>('newest');
   const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -59,6 +82,13 @@ export default function DescriptionsPage() {
   const [dDesc, setDDesc] = useState('');
   const [dTitle, setDTitle] = useState('');
   const [dWebDesc, setDWebDesc] = useState('');
+  const [dFacts, setDFacts] = useState<string[]>([]);
+  const [dSeoKw, setDSeoKw] = useState('');
+  const [dColorMode, setDColorMode] = useState<ColorMode>('off');
+  const [dColorName, setDColorName] = useState('');
+  const [dMaxWords, setDMaxWords] = useState('');
+  const [dSeoTitle, setDSeoTitle] = useState('');
+  const [dSeoDesc, setDSeoDesc] = useState('');
   const [drawerBusy, setDrawerBusy] = useState('');
   const [drawerMsg, setDrawerMsg] = useState('');
 
@@ -74,6 +104,8 @@ export default function DescriptionsPage() {
   // Style rules + examples state
   const [sBan, setSBan] = useState(true);
   const [sFacts, setSFacts] = useState(true);
+  const [sMaxWords, setSMaxWords] = useState<number>(DESC_WORDS_DEFAULT);
+  const [sMaxWordsInput, setSMaxWordsInput] = useState(String(DESC_WORDS_DEFAULT));
   const [sRules, setSRules] = useState<string[]>([]);
   const [sNewRule, setSNewRule] = useState('');
   const [sExamples, setSExamples] = useState<{ title: string; body: string }[]>(
@@ -81,12 +113,53 @@ export default function DescriptionsPage() {
   );
   const [sMsg, setSMsg] = useState('');
 
+  // Bullet bank
+  const [bank, setBank] = useState<Bullet[]>([]);
+  const [bNewGroup, setBNewGroup] = useState('');
+  const [bNewText, setBNewText] = useState('');
+  const [bMsg, setBMsg] = useState('');
+
+  const loadBank = useCallback(async () => {
+    try {
+      const res = await fetch('/api/descriptions/bullets');
+      const data = await res.json();
+      if (Array.isArray(data.bullets)) setBank(data.bullets);
+    } catch { /* bank is optional */ }
+  }, []);
+
+  useEffect(() => { loadBank(); }, [loadBank]);
+
+  // Load the bullets on/off setting up front so the drawer preview matches what gets pushed
+  useEffect(() => {
+    fetch('/api/descriptions/settings')
+      .then(r => r.json())
+      .then(st => {
+        setSFacts(st.quick_facts_enabled !== false);
+        const n = parseWordLimit(st.web_desc_max_words) ?? DESC_WORDS_DEFAULT;
+        setSMaxWords(n); setSMaxWordsInput(String(n));
+      })
+      .catch(() => {});
+  }, []);
+
+  async function bankCall(method: 'POST' | 'DELETE', body?: any, id?: string) {
+    setBMsg('');
+    const res = await fetch(id ? `/api/descriptions/bullets?id=${encodeURIComponent(id)}` : '/api/descriptions/bullets', {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && Array.isArray(data.bullets)) setBank(data.bullets);
+    else setBMsg(data.error || `Failed (${res.status})`);
+    return res.ok;
+  }
+
   const loadList = useCallback(async (which = tab, q = search, act = filterActive, cat = filterCategory) => {
     if (which === 'guidelines') return;
     setLoading(true);
     try {
       const invParams = filterInvField !== 'any' ? `&inv_field=${filterInvField}&inv_min=${encodeURIComponent(filterInvMin || '0')}` : '';
-      const res = await fetch(`/api/descriptions/list?status=${which}&search=${encodeURIComponent(q)}&active=${act}&category=${encodeURIComponent(cat)}${invParams}&limit=200`);
+      const res = await fetch(`/api/descriptions/list?status=${which}&search=${encodeURIComponent(q)}&active=${act}&category=${encodeURIComponent(cat)}${invParams}&sort=${sortBy}&limit=200`);
       const data = await res.json();
       setRows(data.rows || []);
       setCounts(data.counts || {});
@@ -94,7 +167,7 @@ export default function DescriptionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [tab, search, filterActive, filterCategory, filterInvField, filterInvMin]);
+  }, [tab, search, filterActive, filterCategory, filterInvField, filterInvMin, sortBy]);
 
   const loadGuidelines = useCallback(async () => {
     const [gRes, sRes] = await Promise.all([
@@ -108,6 +181,7 @@ export default function DescriptionsPage() {
     const st = await sRes.json();
     setSBan(st.ban_em_dashes !== false);
     setSFacts(st.quick_facts_enabled !== false);
+    { const n = parseWordLimit(st.web_desc_max_words) ?? DESC_WORDS_DEFAULT; setSMaxWords(n); setSMaxWordsInput(String(n)); }
     setSRules(Array.isArray(st.rules) ? st.rules : []);
     const ex = Array.isArray(st.examples) ? st.examples : [];
     setSExamples(Array.from({ length: 5 }, (_, i) => ex[i] ? { title: ex[i].title || '', body: ex[i].body || '' } : { title: '', body: '' }));
@@ -118,15 +192,52 @@ export default function DescriptionsPage() {
     else loadList(tab);
     setSelected(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, filterActive, filterCategory, filterInvField, filterInvMin]);
+  }, [tab, filterActive, filterCategory, filterInvField, filterInvMin, sortBy]);
 
   function openDrawer(row: CopyRow) {
     setOpen(row);
     setDKeywords(row.keywords || '');
     setDDesc(row.draft_description || '');
     setDTitle(row.draft_web_title || '');
-    setDWebDesc(row.draft_web_description || '');
+    const facts = Array.isArray(row.quick_facts) ? row.quick_facts : [];
+    setDFacts(facts);
+    setDWebDesc(stripTrailingFacts(htmlToText(row.draft_web_description || ''), [...bank.map(b => b.text), ...facts]));
+    setDSeoKw(row.seo_keywords || '');
+    setDColorMode(normColorMode(row.color_mode));
+    setDColorName(row.color_name || '');
+    setDMaxWords(row.desc_max_words ? String(row.desc_max_words) : '');
+    setDSeoTitle(row.draft_seo_title || '');
+    setDSeoDesc(row.draft_seo_meta_description || '');
     setDrawerMsg('');
+  }
+
+  function toggleFact(text: string) {
+    setDFacts(prev => {
+      if (prev.some(f => f.toLowerCase() === text.toLowerCase())) return prev.filter(f => f.toLowerCase() !== text.toLowerCase());
+      // Keep bank order: rebuild from bank order, then any custom (non-bank) facts
+      const next = [...prev, text];
+      const bankOrder = bank.map(b => b.text.toLowerCase());
+      return next.sort((a, b) => {
+        const ia = bankOrder.indexOf(a.toLowerCase()); const ib = bankOrder.indexOf(b.toLowerCase());
+        return (ia === -1 ? 9999 : ia) - (ib === -1 ? 9999 : ib);
+      });
+    });
+  }
+
+  function drawerUpdates(): any {
+    return {
+      keywords: dKeywords,
+      draft_description: dDesc,
+      draft_web_title: dTitle,
+      draft_web_description: dWebDesc,
+      quick_facts: dFacts,
+      seo_keywords: dSeoKw,
+      draft_seo_title: dSeoTitle,
+      draft_seo_meta_description: dSeoDesc,
+      color_mode: dColorMode,
+      color_name: dColorName,
+      desc_max_words: dMaxWords,
+    };
   }
 
   async function refreshFromAM() {
@@ -193,14 +304,17 @@ export default function DescriptionsPage() {
       const res = await fetch('/api/descriptions/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ product_id: open.product_id, keywords: dKeywords }),
+        body: JSON.stringify({ product_id: open.product_id, keywords: dKeywords, seo_keywords: dSeoKw, color_mode: dColorMode, color_name: dColorName, max_words: dMaxWords }),
       });
       const data = await res.json();
       if (res.ok) {
         setDDesc(data.drafts.draft_description);
         setDTitle(data.drafts.draft_web_title);
         setDWebDesc(data.drafts.draft_web_description);
-        setDrawerMsg('Draft generated — edit as needed, then Approve & Push.');
+        setDFacts(Array.isArray(data.drafts.quick_facts) ? data.drafts.quick_facts : []);
+        setDSeoTitle(data.drafts.draft_seo_title || '');
+        setDSeoDesc(data.drafts.draft_seo_meta_description || '');
+        setDrawerMsg('Draft generated. Edit as needed, then Approve & Push.');
         await loadList();
       } else {
         setDrawerMsg(`Generation failed: ${data.error}${data.detail ? ` — ${data.detail}` : ''}`);
@@ -215,12 +329,7 @@ export default function DescriptionsPage() {
     setDrawerBusy('save');
     setDrawerMsg('');
     try {
-      const updates: any = {
-        keywords: dKeywords,
-        draft_description: dDesc,
-        draft_web_title: dTitle,
-        draft_web_description: dWebDesc,
-      };
+      const updates: any = drawerUpdates();
       if (statusChange) updates.status = statusChange;
       const res = await fetch('/api/descriptions/save', {
         method: 'POST',
@@ -251,7 +360,7 @@ export default function DescriptionsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           product_id: open.product_id,
-          updates: { keywords: dKeywords, draft_description: dDesc, draft_web_title: dTitle, draft_web_description: dWebDesc },
+          updates: drawerUpdates(),
         }),
       });
       const res = await fetch('/api/descriptions/approve', {
@@ -261,12 +370,68 @@ export default function DescriptionsPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        setDrawerMsg('✅ Pushed to ApparelMagic.');
-        setOpen(null);
+        if (data.warning) {
+          setDrawerMsg(`Pushed to ApparelMagic. ${data.warning}`);
+        } else {
+          setDrawerMsg(`✅ Pushed to ApparelMagic${data.seo === 'pushed' ? ' and SEO to DTC' : ''}.`);
+          setOpen(null);
+        }
         await loadList();
       } else {
         setDrawerMsg(`Push failed: ${data.error}${data.detail ? ` — ${data.detail}` : ''}`);
       }
+    } finally {
+      setDrawerBusy('');
+    }
+  }
+
+  async function drawerSeoGenerate() {
+    if (!open) return;
+    setDrawerBusy('seo');
+    setDrawerMsg('');
+    try {
+      // Save current edits so SEO is written from what's on screen
+      await fetch('/api/descriptions/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ product_id: open.product_id, updates: drawerUpdates() }),
+      });
+      const res = await fetch('/api/descriptions/seo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ product_id: open.product_id, action: 'generate', seo_keywords: dSeoKw }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setDSeoTitle(data.seo_title || '');
+        setDSeoDesc(data.seo_description || '');
+        setDrawerMsg('SEO regenerated.');
+      } else {
+        setDrawerMsg(`SEO generation failed: ${data.error}${data.detail ? `. ${data.detail}` : ''}`);
+      }
+    } finally {
+      setDrawerBusy('');
+    }
+  }
+
+  async function drawerSeoPush() {
+    if (!open) return;
+    setDrawerBusy('seopush');
+    setDrawerMsg('');
+    try {
+      await fetch('/api/descriptions/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ product_id: open.product_id, updates: { seo_keywords: dSeoKw, draft_seo_title: dSeoTitle, draft_seo_meta_description: dSeoDesc } }),
+      });
+      const res = await fetch('/api/descriptions/seo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ product_id: open.product_id, action: 'push' }),
+      });
+      const data = await res.json();
+      setDrawerMsg(res.ok ? '✅ SEO pushed to DTC Shopify.' : `SEO push failed: ${data.error}${data.detail ? `. ${data.detail}` : ''}`);
+      await loadList();
     } finally {
       setDrawerBusy('');
     }
@@ -390,8 +555,21 @@ export default function DescriptionsPage() {
                 onChange={e => { setSFacts(e.target.checked); saveSettings({ quick_facts_enabled: e.target.checked }); }}
                 className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
               />
-              Append quick-facts block to every web description (sizing, fabric, made-in, colors; re-added at push if edited out)
+              Append selected bullets under every web description (composed at push, so edits to the prose never lose them)
             </label>
+            <div className="flex items-center gap-2 text-sm text-gray-700 mb-4">
+              <span>Default web description length: up to</span>
+              <input
+                type="number"
+                min={20}
+                max={400}
+                value={sMaxWordsInput}
+                onChange={e => setSMaxWordsInput(e.target.value)}
+                onBlur={() => { const n = parseWordLimit(sMaxWordsInput); if (n && n !== sMaxWords) { setSMaxWords(n); saveSettings({ web_desc_max_words: n }); } setSMaxWordsInput(String(n ?? sMaxWords)); }}
+                className="w-20 px-2 py-1 border border-gray-300 rounded-lg text-sm"
+              />
+              <span>words <span className="text-gray-400">(each product can override this in the drawer)</span></span>
+            </div>
             <div className="space-y-2 mb-3">
               {sRules.map((rule, i) => (
                 <div key={i} className="flex items-start gap-2 bg-gray-50 rounded-lg px-3 py-2">
@@ -420,6 +598,55 @@ export default function DescriptionsPage() {
               >Add Rule</button>
             </div>
             {sMsg && <p className="text-sm text-gray-500 mt-2">{sMsg}</p>}
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Bullet Bank</h2>
+            <p className="text-sm text-gray-400 mb-4">Bullets that go under the AI description. On generate, Claude pre-selects the ones that are true for the product (one per group); you adjust with checkboxes in the review drawer. Inactive bullets are hidden from new generations.</p>
+            <div className="space-y-4 mb-4">
+              {groupBank(bank).map(g => (
+                <div key={g.group}>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">{g.group}</p>
+                  <div className="space-y-1">
+                    {g.items.map(b => (
+                      <div key={b.id} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-1.5">
+                        <span className={`text-sm flex-1 ${b.active ? 'text-gray-700' : 'text-gray-300 line-through'}`}>{b.text}</span>
+                        <button onClick={() => bankCall('POST', { id: b.id, active: !b.active })} className="text-xs text-gray-400 hover:text-gray-700">{b.active ? 'Deactivate' : 'Activate'}</button>
+                        <button onClick={() => { if (confirm(`Delete "${b.text}"?`)) bankCall('DELETE', undefined, b.id); }} className="text-gray-300 hover:text-red-500 text-sm leading-none">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {bank.length === 0 && <p className="text-sm text-gray-300">No bullets yet. Until you add some, Claude writes the bullets freely.</p>}
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                list="bullet-groups"
+                value={bNewGroup}
+                onChange={e => setBNewGroup(e.target.value)}
+                placeholder="Group (e.g. Fabric)"
+                className="w-40 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              />
+              <datalist id="bullet-groups">
+                {groupBank(bank).map(g => <option key={g.group} value={g.group} />)}
+              </datalist>
+              <input
+                type="text"
+                value={bNewText}
+                onChange={e => setBNewText(e.target.value)}
+                onKeyDown={async e => { if (e.key === 'Enter' && bNewGroup.trim() && bNewText.trim()) { if (await bankCall('POST', { group_name: bNewGroup, text: bNewText })) setBNewText(''); } }}
+                placeholder='Bullet text (e.g. "100% Linen")'
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              />
+              <button
+                onClick={async () => { if (await bankCall('POST', { group_name: bNewGroup, text: bNewText })) setBNewText(''); }}
+                disabled={!bNewGroup.trim() || !bNewText.trim()}
+                className="bg-brand-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
+              >Add Bullet</button>
+            </div>
+            {bMsg && <p className="text-sm text-red-500 mt-2">{bMsg}</p>}
           </div>
 
           <div className="bg-white rounded-xl border border-gray-200 p-6">
@@ -454,7 +681,7 @@ export default function DescriptionsPage() {
 
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-1">Category Rules</h2>
-            <p className="text-sm text-gray-400 mb-4">Standing rules applied on top of the brand voice when the product matches the category. (SEO title/meta rules will live here too once the Shopify SEO phase lands.)</p>
+            <p className="text-sm text-gray-400 mb-4">Standing rules applied on top of the brand voice when the product matches the category.</p>
 
             {gRules.map(rule => (
               <CategoryRule key={rule.id} rule={rule} onSave={(text) => saveGuideline('category', rule.category, text)} saving={gSaving} />
@@ -531,6 +758,14 @@ export default function DescriptionsPage() {
                 className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-sm"
               />
             )}
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value as 'newest' | 'style')}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+            >
+              <option value="newest">Newest first</option>
+              <option value="style">Style #</option>
+            </select>
             {tab === 'pending' && (
               <button
                 onClick={generateSelected}
@@ -603,7 +838,7 @@ export default function DescriptionsPage() {
                       {(r.qty_inventory ?? 0)} / {(r.qty_avail_sell ?? 0)}
                     </td>
                     <td className="py-2 px-3 text-gray-500 max-w-md truncate">
-                      {(tab === 'drafted' ? r.draft_web_description : r.current_web_description) || <span className="text-gray-300">empty</span>}
+                      {htmlToText((tab === 'drafted' ? r.draft_web_description : r.current_web_description) || '') || <span className="text-gray-300">empty</span>}
                     </td>
                   </tr>
                 ))}
@@ -640,7 +875,7 @@ export default function DescriptionsPage() {
               <p className="font-medium text-gray-700 mb-1">Current copy in AM</p>
               <p className="text-gray-500"><span className="text-gray-400">Description:</span> {open.current_description || <em>empty</em>}</p>
               <p className="text-gray-500"><span className="text-gray-400">Web title:</span> {open.current_web_title || <em>empty</em>}</p>
-              <p className="text-gray-500"><span className="text-gray-400">Web description:</span> {open.current_web_description || <em>empty</em>}</p>
+              <p className="text-gray-500"><span className="text-gray-400">Web description:</span> {open.current_web_description ? htmlToText(open.current_web_description).replace(/\s*\n\s*/g, ' · ') : <em>empty</em>}</p>
             </div>
 
             {/* Keywords */}
@@ -652,6 +887,27 @@ export default function DescriptionsPage() {
               placeholder="e.g. breathable, festival wear, matching headwrap included"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-4 focus:ring-2 focus:ring-brand-500 outline-none"
             />
+
+            {/* Color */}
+            <label className="block text-sm font-medium text-gray-700 mb-1">Color <span className="text-xs text-gray-400">(for styles that come only as pictured; applies on Generate)</span></label>
+            <div className="flex gap-2 mb-4">
+              <select
+                value={dColorMode}
+                onChange={e => setDColorMode(normColorMode(e.target.value))}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+              >
+                {COLOR_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+              {dColorMode !== 'off' && (
+                <input
+                  type="text"
+                  value={dColorName}
+                  onChange={e => setDColorName(e.target.value)}
+                  placeholder="Color name (optional, e.g. Black and Gold). Blank = Claude names it from the photo"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+              )}
+            </div>
 
             {/* Drafts */}
             <div className="space-y-3 mb-4">
@@ -666,8 +922,124 @@ export default function DescriptionsPage() {
                 <input type="text" value={dTitle} onChange={e => setDTitle(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Shopify Web Description</label>
+                <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Shopify Web Description <span className="text-xs text-gray-400">(prose only, bullets are added below)</span>{' '}
+                    <span className={`text-xs ${countWords(dWebDesc) > (parseWordLimit(dMaxWords) ?? sMaxWords) ? 'text-red-500' : 'text-gray-400'}`}>
+                      {countWords(dWebDesc)}/{parseWordLimit(dMaxWords) ?? sMaxWords} words
+                    </span>
+                  </label>
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-gray-400 mr-1">Length:</span>
+                    {DESC_WORD_PRESETS.map(p => (
+                      <button
+                        key={p.label}
+                        onClick={() => setDMaxWords(p.words === sMaxWords ? '' : String(p.words))}
+                        className={`px-2 py-0.5 rounded-md text-xs border ${(parseWordLimit(dMaxWords) ?? sMaxWords) === p.words ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'}`}
+                      >{p.label}</button>
+                    ))}
+                    <input
+                      type="number"
+                      min={20}
+                      max={400}
+                      value={dMaxWords}
+                      onChange={e => setDMaxWords(e.target.value)}
+                      placeholder={String(sMaxWords)}
+                      title="Max words for this product (blank = Settings default). Applies on Regenerate."
+                      className="w-16 px-2 py-0.5 border border-gray-300 rounded-md text-xs"
+                    />
+                  </div>
+                </div>
                 <textarea value={dWebDesc} onChange={e => setDWebDesc(e.target.value)} rows={6} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+              </div>
+            </div>
+
+            {/* Bullets */}
+            <div className="border border-gray-200 rounded-lg p-4 mb-4">
+              <p className="text-sm font-medium text-gray-700 mb-2">Bullets</p>
+              {bank.filter(b => b.active).length === 0 && dFacts.length === 0 && (
+                <p className="text-sm text-gray-400">Bullet bank is empty. Add bullets in Settings.</p>
+              )}
+              <div className="space-y-2">
+                {groupBank(bank.filter(b => b.active || dFacts.some(f => f.toLowerCase() === b.text.toLowerCase()))).map(g => (
+                  <div key={g.group} className="flex items-start gap-3">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-400 w-16 pt-1 shrink-0">{g.group}</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {g.items.map(b => {
+                        const on = dFacts.some(f => f.toLowerCase() === b.text.toLowerCase());
+                        return (
+                          <button
+                            key={b.id}
+                            onClick={() => toggleFact(b.text)}
+                            className={`px-2 py-1 rounded-md text-xs border ${on ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'}`}
+                          >{b.text}</button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+                {dFacts.filter(f => !bank.some(b => b.text.toLowerCase() === f.toLowerCase())).length > 0 && (
+                  <div className="flex items-start gap-3">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-400 w-16 pt-1 shrink-0">Other</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {dFacts.filter(f => !bank.some(b => b.text.toLowerCase() === f.toLowerCase())).map(f => (
+                        <button key={f} onClick={() => toggleFact(f)} title="Not in the bank. Click to remove." className="px-2 py-1 rounded-md text-xs border bg-amber-50 border-amber-300 text-amber-800">{f} ✕</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              {!sFacts && (
+                <div className="mt-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2 text-xs flex items-center justify-between gap-2">
+                  <span>Bullets are turned off in Settings, so none will be pushed.</span>
+                  <button onClick={() => { setSFacts(true); saveSettings({ quick_facts_enabled: true }); }} className="font-medium underline whitespace-nowrap">Turn on</button>
+                </div>
+              )}
+              {dWebDesc && (
+                <div className="mt-3 bg-gray-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-400 mb-1">What gets pushed</p>
+                  <div
+                    className="text-sm text-gray-600 [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mb-0.5"
+                    dangerouslySetInnerHTML={{ __html: composeHtml(dWebDesc, sFacts ? dFacts : [], [...bank.map(b => b.text), ...dFacts]) }}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* SEO (DTC only) */}
+            <div className="border border-gray-200 rounded-lg p-4 mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-medium text-gray-700">SEO <span className="text-xs text-gray-400">(DTC Shopify only)</span></p>
+                {open.seo_pushed_at && !open.seo_push_error && <span className="text-xs text-green-600">Pushed {new Date(open.seo_pushed_at).toLocaleDateString()}</span>}
+                {open.seo_push_error && <span className="text-xs text-red-500 max-w-xs truncate" title={open.seo_push_error}>Push error</span>}
+              </div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Target keywords <span className="text-gray-400">(comma separated, first is primary)</span></label>
+              <input
+                type="text"
+                value={dSeoKw}
+                onChange={e => setDSeoKw(e.target.value)}
+                placeholder="e.g. african print maxi dress, ankara dress"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3"
+              />
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Meta title <span className={dSeoTitle.length > SEO_TITLE_MAX ? 'text-red-500' : 'text-gray-400'}>{dSeoTitle.length}/{SEO_TITLE_MAX}</span>
+              </label>
+              <input type="text" value={dSeoTitle} onChange={e => setDSeoTitle(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3" />
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Meta description <span className={dSeoDesc.length > SEO_DESC_MAX ? 'text-red-500' : 'text-gray-400'}>{dSeoDesc.length}/{SEO_DESC_MAX}</span>
+              </label>
+              <textarea value={dSeoDesc} onChange={e => setDSeoDesc(e.target.value)} rows={3} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3" />
+              <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={drawerSeoGenerate} disabled={!!drawerBusy} className="bg-white border border-brand-600 text-brand-600 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-brand-50 disabled:opacity-50">
+                  {drawerBusy === 'seo' ? 'Writing…' : 'Regenerate SEO'}
+                </button>
+                {(open.status === 'pushed' || open.status === 'ok') ? (
+                  <button onClick={drawerSeoPush} disabled={!!drawerBusy || (!dSeoTitle && !dSeoDesc)} className="bg-brand-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-brand-700 disabled:opacity-50">
+                    {drawerBusy === 'seopush' ? 'Pushing…' : 'Push SEO to DTC'}
+                  </button>
+                ) : (
+                  <span className="text-xs text-gray-400">Pushes to DTC with Approve &amp; Push.</span>
+                )}
               </div>
             </div>
 
@@ -680,11 +1052,9 @@ export default function DescriptionsPage() {
               <button onClick={() => drawerSave()} disabled={!!drawerBusy} className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50">
                 {drawerBusy === 'save' ? 'Saving…' : 'Save Edits'}
               </button>
-              {open.status !== 'pushed' && (
-                <button onClick={drawerApprove} disabled={!!drawerBusy || !dTitle || !dWebDesc} className="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50">
-                  {drawerBusy === 'approve' ? 'Pushing…' : 'Approve & Push to AM'}
-                </button>
-              )}
+              <button onClick={drawerApprove} disabled={!!drawerBusy || !dTitle || !dWebDesc} className="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50">
+                {drawerBusy === 'approve' ? 'Pushing…' : (open.status === 'pushed' ? 'Re-push to AM' : 'Approve & Push to AM')}
+              </button>
               {open.status !== 'pushed' && open.status !== 'skipped' && (
                 <button onClick={() => drawerSave('skipped')} disabled={!!drawerBusy} className="ml-auto text-sm text-gray-400 hover:text-gray-600">Skip</button>
               )}

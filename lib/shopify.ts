@@ -158,3 +158,154 @@ export async function setInventoryPolicy(
   }
   return { ok: true };
 }
+
+export type ShopifySeo = { title: string | null; description: string | null };
+
+/** Read a product's title, handle and SEO fields (read-only probe). */
+export async function getProductSeo(
+  store: ShopifyStore,
+  productId: string
+): Promise<{ ok: boolean; product: { id: string; title: string; handle: string; seo: ShopifySeo } | null; errors?: any }> {
+  const query = `
+    query ProductSeo($id: ID!) {
+      product(id: $id) {
+        id
+        title
+        handle
+        seo { title description }
+      }
+    }`;
+  const result = await shopifyGraphql(store, query, { id: productId });
+  if (!result.ok) return { ok: false, product: null, errors: result.errors };
+  const p = result.data?.product;
+  if (!p) return { ok: true, product: null };
+  return { ok: true, product: { id: p.id, title: p.title, handle: p.handle, seo: { title: p.seo?.title ?? null, description: p.seo?.description ?? null } } };
+}
+
+/** Write a product's SEO title + meta description, then verify from the mutation's returned record. */
+export async function setProductSeo(
+  store: ShopifyStore,
+  productId: string,
+  seo: { title: string; description: string }
+): Promise<{ ok: boolean; seo?: ShopifySeo; errors?: any }> {
+  const mutation = `
+    mutation SetSeo($product: ProductUpdateInput!) {
+      productUpdate(product: $product) {
+        product { id seo { title description } }
+        userErrors { field message }
+      }
+    }`;
+  const result = await shopifyGraphql(store, mutation, {
+    product: { id: productId, seo: { title: seo.title, description: seo.description } },
+  });
+  if (!result.ok) return { ok: false, errors: result.errors };
+
+  const userErrors = result.data?.productUpdate?.userErrors || [];
+  if (userErrors.length) return { ok: false, errors: userErrors };
+
+  const got: ShopifySeo = {
+    title: result.data?.productUpdate?.product?.seo?.title ?? null,
+    description: result.data?.productUpdate?.product?.seo?.description ?? null,
+  };
+  if ((got.title || '') !== seo.title || (got.description || '') !== seo.description) {
+    return { ok: false, seo: got, errors: [{ message: 'SEO did not update (returned values differ from what was sent)' }] };
+  }
+  return { ok: true, seo: got };
+}
+
+export type ShopifyProductHit = { id: string; title: string; handle: string; skus: string[] };
+
+/** Product search (Shopify search syntax, e.g. `sku:ABC-123*` or a free-text term). */
+export async function searchProducts(store: ShopifyStore, q: string, first = 10): Promise<{ ok: boolean; products: ShopifyProductHit[]; errors?: any }> {
+  const query = `
+    query SearchProducts($q: String!, $first: Int!) {
+      products(first: $first, query: $q) {
+        nodes {
+          id
+          title
+          handle
+          variants(first: 5) { nodes { sku } }
+        }
+      }
+    }`;
+  const result = await shopifyGraphql(store, query, { q, first });
+  if (!result.ok) return { ok: false, products: [], errors: result.errors };
+  const nodes = result.data?.products?.nodes || [];
+  return {
+    ok: true,
+    products: nodes.map((n: any) => ({
+      id: n.id,
+      title: n.title,
+      handle: n.handle,
+      skus: (n.variants?.nodes || []).map((v: any) => String(v.sku || '')).filter(Boolean),
+    })),
+  };
+}
+
+/** Batch variant lookup by exact SKU (chunks of 25 OR'ed terms). Returns a map keyed by SKU. */
+export async function findVariantsBySkus(
+  store: ShopifyStore,
+  skus: string[]
+): Promise<{ ok: boolean; variants: Record<string, ShopifyVariant>; errors?: any }> {
+  const unique = Array.from(new Set(skus.filter(Boolean)));
+  const variants: Record<string, ShopifyVariant> = {};
+  const query = `
+    query FindVariants($q: String!) {
+      productVariants(first: 100, query: $q) {
+        nodes {
+          id
+          sku
+          inventoryPolicy
+          displayName
+          product { id title }
+        }
+      }
+    }`;
+  for (let i = 0; i < unique.length; i += 25) {
+    const chunk = unique.slice(i, i + 25);
+    const q = chunk.map(s => `sku:"${s.replace(/"/g, '\\"')}"`).join(' OR ');
+    const result = await shopifyGraphql(store, query, { q });
+    if (!result.ok) return { ok: false, variants, errors: result.errors };
+    const wanted = new Set(chunk);
+    for (const n of result.data?.productVariants?.nodes || []) {
+      if (!wanted.has(n.sku) || variants[n.sku]) continue;
+      variants[n.sku] = {
+        id: n.id,
+        sku: n.sku,
+        inventoryPolicy: n.inventoryPolicy,
+        displayName: n.displayName,
+        productId: n.product?.id,
+        productTitle: n.product?.title,
+      };
+    }
+  }
+  return { ok: true, variants };
+}
+
+/** Set inventory policy on several variants of one Shopify product. Returns the policy Shopify reports back per variant id. */
+export async function setInventoryPolicies(
+  store: ShopifyStore,
+  productId: string,
+  items: { id: string; policy: 'CONTINUE' | 'DENY' }[]
+): Promise<{ ok: boolean; policies: Record<string, string>; errors?: any }> {
+  const mutation = `
+    mutation SetPolicies($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+        productVariants { id inventoryPolicy }
+        userErrors { field message }
+      }
+    }`;
+  const result = await shopifyGraphql(store, mutation, {
+    productId,
+    variants: items.map(i => ({ id: i.id, inventoryPolicy: i.policy })),
+  });
+  if (!result.ok) return { ok: false, policies: {}, errors: result.errors };
+
+  const policies: Record<string, string> = {};
+  for (const v of result.data?.productVariantsBulkUpdate?.productVariants || []) {
+    if (v?.id) policies[v.id] = v.inventoryPolicy;
+  }
+  const userErrors = result.data?.productVariantsBulkUpdate?.userErrors || [];
+  if (userErrors.length) return { ok: false, policies, errors: userErrors };
+  return { ok: true, policies };
+}

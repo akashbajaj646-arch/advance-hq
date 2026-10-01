@@ -104,3 +104,18 @@ export async function amCreate(entity: string, fields: Record<string, any>): Pro
   });
   return parseResult(res);
 }
+
+/**
+ * UPDATE with a JSON body (auth inside the JSON). Use this for rich-text/HTML fields
+ * such as products.web_description: the form-body write HTML-escapes the value
+ * (stores "&lt;p&gt;" and drops lists), while the JSON-body write stores real HTML.
+ * Proven by round-trip probe on product 6171 (16117-276), 2026-09-29.
+ */
+export async function amUpdateJson(entity: string, id: string | number, fields: Record<string, any>): Promise<AmResult> {
+  const res = await fetch(`${BASE_URL}/${entity}/${encodeURIComponent(String(id))}`, {
+    method: 'PUT',
+    headers: { 'User-Agent': 'AdvanceHQ/1.0', 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify({ ...authPair(), ...toFormFields(fields) }),
+  });
+  return parseResult(res);
+}
