@@ -25,6 +25,10 @@
       "schedule": "0-59/5 * * * *"
     },
     {
+      "path": "/api/cron/sync-inventory",
+      "schedule": "7,22,37,52 * * * *"
+    },
+    {
       "path": "/api/admin/sync-warehouse-locations",
       "schedule": "35 2 * * *"
     },
