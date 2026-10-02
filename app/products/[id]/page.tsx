@@ -473,6 +473,29 @@ export default function ProductDetailPage() {
         </div>
       )}
 
+      {tab === 'skus' && rows.length > 0 && (() => {
+        const totOnHand = rows.reduce((t, r) => t + r.on_hand, 0);
+        const totAvail = rows.reduce((t, r) => t + r.available, 0);
+        const activeCount = rows.filter(r => r.active).length;
+        const tone = (n: number) => n > 0 ? 'text-green-600' : n < 0 ? 'text-red-500' : 'text-gray-900';
+        return (
+          <div className="mb-4 grid grid-cols-3 gap-4">
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-3">
+              <div className="text-xs text-gray-500">Total On Hand</div>
+              <div className={`text-2xl font-bold ${tone(totOnHand)}`}>{totOnHand.toLocaleString()}</div>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-3">
+              <div className="text-xs text-gray-500">Total Available</div>
+              <div className={`text-2xl font-bold ${tone(totAvail)}`}>{totAvail.toLocaleString()}</div>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-3">
+              <div className="text-xs text-gray-500">Active SKUs</div>
+              <div className="text-2xl font-bold text-gray-900">{activeCount} <span className="text-sm font-normal text-gray-400">of {rows.length}</span></div>
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
         {tab === 'skus' && (
           <table className="w-full text-sm">
