@@ -309,3 +309,46 @@ export async function setInventoryPolicies(
   if (userErrors.length) return { ok: false, policies, errors: userErrors };
   return { ok: true, policies };
 }
+
+export type ShopifyProductStatus = { id: string; title: string; status: string };
+
+/** Read status (ACTIVE / DRAFT / ARCHIVED) for a set of Shopify product ids. */
+export async function getProductStatuses(
+  store: ShopifyStore,
+  productIds: string[]
+): Promise<{ ok: boolean; products: ShopifyProductStatus[]; errors?: any }> {
+  const ids = Array.from(new Set(productIds.filter(Boolean)));
+  if (!ids.length) return { ok: true, products: [] };
+  const query = `
+    query ProductStatuses($ids: [ID!]!) {
+      nodes(ids: $ids) { ... on Product { id title status } }
+    }`;
+  const result = await shopifyGraphql(store, query, { ids });
+  if (!result.ok) return { ok: false, products: [], errors: result.errors };
+  const products = (result.data?.nodes || [])
+    .filter((n: any) => n?.id)
+    .map((n: any) => ({ id: n.id, title: n.title, status: n.status }));
+  return { ok: true, products };
+}
+
+/** Set a product's status (ACTIVE / DRAFT), verified from the mutation's returned record. */
+export async function setProductStatus(
+  store: ShopifyStore,
+  productId: string,
+  status: 'ACTIVE' | 'DRAFT'
+): Promise<{ ok: boolean; status?: string; errors?: any }> {
+  const mutation = `
+    mutation SetStatus($product: ProductUpdateInput!) {
+      productUpdate(product: $product) {
+        product { id status }
+        userErrors { field message }
+      }
+    }`;
+  const result = await shopifyGraphql(store, mutation, { product: { id: productId, status } });
+  if (!result.ok) return { ok: false, errors: result.errors };
+  const userErrors = result.data?.productUpdate?.userErrors || [];
+  if (userErrors.length) return { ok: false, errors: userErrors };
+  const got = result.data?.productUpdate?.product?.status;
+  if (got !== status) return { ok: false, status: got, errors: [{ message: `Status did not update (got ${got ?? 'nothing'})` }] };
+  return { ok: true, status: got };
+}
