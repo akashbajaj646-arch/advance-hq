@@ -9,6 +9,7 @@ const supabaseAdmin = createClient(
 
 // Allowed tables — whitelist to prevent arbitrary table access
 const ALLOWED_TABLES = new Set([
+  'rfid_session_summary', 'rfid_session_reads', 'rfid_missing_tags', 'rfid_presence_summary', 'rfid_unregistered_tags',
   'customers', 'customer_locations', 'hq_contacts',
   'orders', 'order_items', 'invoices', 'invoice_items',
   'pick_tickets', 'pick_ticket_items', 'pick_ticket_scans', 'shipments', 'shipment_boxes',
