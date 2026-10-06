@@ -1,6 +1,7 @@
 // app/api/wholesale/apply/route.js
 // PUBLIC endpoint for the storefront wizard form. Handles full submissions
-// and partial (abandon) captures, and emails sales@ on a full submission.
+// and partial (abandon) captures, emails sales@ on a new full submission, and
+// writes every submission to the Supabase application log.
 //
 // Env: SHOPIFY_STORE, SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET
 // Optional: TURNSTILE_SECRET, ALLOWED_ORIGIN,
@@ -8,6 +9,7 @@
 
 import { shopifyGraphQL, ACCESS_TAGS } from "@/lib/shopifyAdmin";
 import { notifyNewApplication } from "@/lib/notify";
+import { recordSubmission } from "@/lib/wholesaleApplications";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +30,14 @@ const CUSTOMER_MUTATION = (name) => `
       userErrors { field message }
     }
   }`;
+
+async function lookupByEmail(email) {
+  const found = await shopifyGraphQL(
+    `query($q: String!) { customers(first: 1, query: $q) { nodes { id tags } } }`,
+    { q: `email:${email}` }
+  );
+  return found?.customers?.nodes?.[0] || null;
+}
 
 export async function POST(req) {
   const json = (body, status = 200) =>
@@ -104,18 +114,18 @@ export async function POST(req) {
         }]
       : undefined;
 
-    const found = await shopifyGraphQL(
-      `query($q: String!) { customers(first: 1, query: $q) { nodes { id tags } } }`,
-      { q: `email:${email}` }
-    );
-    const existing = found.customers.nodes[0] || null;
+    let existing = await lookupByEmail(email);
 
     let status;
+    let notify = false;
 
-    if (existing) {
-      const tags = new Set(existing.tags);
+    // Updates an existing customer record. Shared by the normal path and by
+    // the "email has already been taken" fallback below.
+    const updateExisting = async (customer) => {
+      const tags = new Set(customer.tags || []);
       const approved = ACCESS_TAGS.some((t) => tags.has(t));
       const alreadyPending = tags.has("pending");
+
       if (!approved) {
         if (isPartial) {
           if (!alreadyPending) tags.add("abandoned-application");
@@ -124,7 +134,8 @@ export async function POST(req) {
           tags.add("pending");
         }
       }
-      const input = { id: existing.id, tags: Array.from(tags), metafields };
+
+      const input = { id: customer.id, tags: Array.from(tags), metafields };
       if (firstName) input.firstName = firstName;
       if (lastName) input.lastName = lastName;
       if (!isPartial && addresses) input.addresses = addresses;
@@ -133,7 +144,18 @@ export async function POST(req) {
       if (d.customerUpdate.userErrors.length)
         throw new Error(JSON.stringify(d.customerUpdate.userErrors));
 
-      status = approved ? "already_approved" : isPartial ? "partial" : "pending";
+      if (approved) return { status: "already_approved", notify: false };
+      if (isPartial) return { status: "partial", notify: false };
+      // Resubmission of an application already in the queue. Record the new
+      // details but don't email sales a second time.
+      if (alreadyPending) return { status: "already_pending", notify: false };
+      return { status: "pending", notify: true };
+    };
+
+    if (existing) {
+      const r = await updateExisting(existing);
+      status = r.status;
+      notify = r.notify;
     } else {
       const input = {
         email,
@@ -147,6 +169,7 @@ export async function POST(req) {
 
       let d = await shopifyGraphQL(CUSTOMER_MUTATION("customerCreate"), { input });
       let errs = d.customerCreate.userErrors;
+
       if (errs.length && JSON.stringify(errs).match(/phone|address/i)) {
         // formatting rejections shouldn't lose the lead; retry bare
         delete input.phone;
@@ -154,15 +177,36 @@ export async function POST(req) {
         d = await shopifyGraphQL(CUSTOMER_MUTATION("customerCreate"), { input });
         errs = d.customerCreate.userErrors;
       }
+
+      if (errs.length && JSON.stringify(errs).match(/taken|already/i)) {
+        // The customer exists but Shopify's search index hadn't caught up when
+        // we looked, so the lookup above came back empty. Re-read and update.
+        existing = await lookupByEmail(email);
+        if (existing) {
+          const r = await updateExisting(existing);
+          status = r.status;
+          notify = r.notify;
+          errs = [];
+        }
+      }
+
       if (errs.length) throw new Error(JSON.stringify(errs));
 
-      status = isPartial ? "partial" : "pending";
+      if (!existing && d?.customerCreate?.customer?.id) {
+        existing = { id: d.customerCreate.customer.id, tags: [] };
+      }
+
+      if (!status) {
+        status = isPartial ? "partial" : "pending";
+        notify = !isPartial;
+      }
     }
 
-    // Notify sales on a completed application only, never on a partial.
+    // Notify sales on a brand new completed application only. Never on a
+    // partial, a resubmission, or an already-approved customer.
     // Awaited so the serverless function doesn't exit before it sends,
     // and it can never fail the request.
-    if (!isPartial) {
+    if (notify) {
       try {
         await notifyNewApplication({
           email,
@@ -179,6 +223,22 @@ export async function POST(req) {
         console.error("wholesale/apply: notification failed", e);
       }
     }
+
+    // Durable submission log for the Advance HQ dashboard. Never throws.
+    await recordSubmission({
+      email,
+      shopifyCustomerId: existing ? existing.id : null,
+      contactName: [firstName, lastName].filter(Boolean).join(" "),
+      businessName,
+      phone,
+      einResale,
+      website,
+      about,
+      address: [address1, city, province, zip, country].filter(Boolean).join(", "),
+      smsConsent,
+      isPartial,
+      source: "website",
+    });
 
     return json({ ok: true, status });
   } catch (e) {

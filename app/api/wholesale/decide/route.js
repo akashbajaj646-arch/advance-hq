@@ -6,6 +6,8 @@
 // INTERNAL: add your Advance HQ auth guard, same as other routes.
 
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
+import { recordDecision } from "@/lib/wholesaleApplications";
+import { getSession } from "@/lib/auth";
 
 export async function POST(req) {
   // TODO: insert your standard Advance HQ session/auth check here and 401 if absent.
@@ -16,7 +18,7 @@ export async function POST(req) {
       return Response.json({ error: "customerId and decision (approve|deny) required" }, { status: 400 });
 
     const current = await shopifyGraphQL(
-      `query($id: ID!) { customer(id: $id) { id tags } }`,
+      `query($id: ID!) { customer(id: $id) { id email tags } }`,
       { id: customerId }
     );
     if (!current.customer) return Response.json({ error: "Customer not found" }, { status: 404 });
@@ -37,6 +39,19 @@ export async function POST(req) {
     );
     const errs = d.customerUpdate.userErrors;
     if (errs.length) throw new Error(JSON.stringify(errs));
+
+    let decidedBy = null;
+    try {
+      const s = await getSession();
+      decidedBy = s?.user?.email || s?.user?.name || null;
+    } catch (e) {}
+
+    await recordDecision({
+      email: current.customer.email,
+      shopifyCustomerId: customerId,
+      status: decision === "approve" ? "approved" : "denied",
+      decidedBy,
+    });
 
     return Response.json({ ok: true, tags: d.customerUpdate.customer.tags });
   } catch (e) {
