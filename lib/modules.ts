@@ -45,7 +45,7 @@ export const MODULES: ModuleDef[] = [
   { key: 'tickets', label: 'Tickets', href: '/tickets', prefixes: ['/tickets'] },
   { key: 'payments', label: 'Payments', href: '/payments', prefixes: ['/payments'] },
   { key: 'payment-links', label: 'Payment Links', href: '/payment-links', prefixes: ['/payment-links'] },
-  { key: 'wholesale-approvals', label: 'Wholesale Approvals', href: '/wholesale-approvals', prefixes: ['/wholesale-approvals'] },
+  { key: 'wholesale-approvals', label: 'Wholesale Applications', href: '/wholesale-applications', prefixes: ['/wholesale-applications', '/wholesale-approvals'] },
   { key: 'purchase-orders', label: 'Purchase Orders', href: '/purchase-orders', prefixes: ['/purchase-orders'] },
   { key: 'shipments', label: 'Shipments', href: '/shipments', prefixes: ['/shipments'] },
   { key: 'shipping', label: 'Shipping Module', href: '/shipping/queue', prefixes: ['/shipping'] },
