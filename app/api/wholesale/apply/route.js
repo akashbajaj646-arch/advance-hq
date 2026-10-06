@@ -53,7 +53,6 @@ export async function POST(req) {
       if (!businessName) return json({ error: "Business name required" }, 400);
       if (!firstName) return json({ error: "Name required" }, 400);
       if (!phone) return json({ error: "Phone required" }, 400);
-      if (!einResale) return json({ error: "Tax ID required" }, 400);
 
       if (process.env.TURNSTILE_SECRET) {
         const tr = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
