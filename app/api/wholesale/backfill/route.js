@@ -31,10 +31,9 @@ function statusFor(tags) {
 
 export async function POST() {
   try {
-    const { data: known } = await supabaseAdmin
-      .from("wholesale_applications")
-      .select("email");
-    const have = new Set((known || []).map((r) => r.email));
+    // A plain select caps at 1000 rows, so we don't pre-load existing emails.
+    // Upsert with ignoreDuplicates lets the database settle it instead.
+    const have = new Set();
 
     let after = null, scanned = 0, inserted = 0, pages = 0;
     const batch = [];
@@ -77,7 +76,9 @@ export async function POST() {
       }
 
       if (batch.length >= 250) {
-        const { error } = await supabaseAdmin.from("wholesale_applications").insert(batch);
+        const { error } = await supabaseAdmin
+          .from("wholesale_applications")
+          .upsert(batch, { onConflict: "email", ignoreDuplicates: true });
         if (error) throw error;
         inserted += batch.length;
         batch.length = 0;
@@ -88,7 +89,9 @@ export async function POST() {
     }
 
     if (batch.length) {
-      const { error } = await supabaseAdmin.from("wholesale_applications").insert(batch);
+      const { error } = await supabaseAdmin
+        .from("wholesale_applications")
+        .upsert(batch, { onConflict: "email", ignoreDuplicates: true });
       if (error) throw error;
       inserted += batch.length;
     }

@@ -30,13 +30,22 @@ export async function GET(request) {
     const { data, error } = await query;
     if (error) throw error;
 
-    const { data: counts } = await supabaseAdmin
-      .from("wholesale_applications")
-      .select("status");
-
+    // Real counts. A plain select would cap at 1000 rows and under-report.
     const tally = {};
-    (counts || []).forEach((r) => { tally[r.status] = (tally[r.status] || 0) + 1; });
-    tally.all = (counts || []).length;
+    const buckets = ["pending", "approved", "denied", "abandoned"];
+    await Promise.all(
+      buckets.map(async (s) => {
+        const { count } = await supabaseAdmin
+          .from("wholesale_applications")
+          .select("id", { count: "exact", head: true })
+          .eq("status", s);
+        tally[s] = count || 0;
+      })
+    );
+    const { count: allCount } = await supabaseAdmin
+      .from("wholesale_applications")
+      .select("id", { count: "exact", head: true });
+    tally.all = allCount || 0;
 
     return Response.json({ submissions: data || [], counts: tally });
   } catch (e) {
