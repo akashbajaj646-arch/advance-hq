@@ -1,11 +1,15 @@
 // app/api/wholesale/apply/route.js
 // PUBLIC endpoint for the storefront wizard form. Handles full submissions
-// and partial (abandon) captures. Guard with Turnstile via TURNSTILE_SECRET.
+// and partial (abandon) captures, and emails sales@ on a full submission.
 //
 // Env: SHOPIFY_STORE, SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET
-// Optional: TURNSTILE_SECRET, ALLOWED_ORIGIN
+// Optional: TURNSTILE_SECRET, ALLOWED_ORIGIN,
+//           RESEND_API_KEY, NOTIFY_TO, NOTIFY_FROM, NEXT_PUBLIC_APP_URL
 
 import { shopifyGraphQL, ACCESS_TAGS } from "@/lib/shopifyAdmin";
+import { notifyNewApplication } from "@/lib/notify";
+
+export const dynamic = "force-dynamic";
 
 const corsHeaders = () => ({
   "Access-Control-Allow-Origin": process.env.ALLOWED_ORIGIN || "*",
@@ -41,6 +45,9 @@ export async function POST(req) {
     const businessName = String(b.business_name || "").trim();
     const phone = String(b.phone || "").trim();
     const einResale = String(b.ein_resale || "").trim();
+    const website = String(b.website || "").trim();
+    const about = String(b.about || "").trim();
+    const smsConsent = b.sms_consent === "yes";
 
     if (!isPartial) {
       if (!businessName) return json({ error: "Business name required" }, 400);
@@ -63,10 +70,10 @@ export async function POST(req) {
 
     const mfPairs = [
       ["business_name", businessName],
-      ["business_about", String(b.about || "").trim()],
+      ["business_about", about],
       ["ein_resale", einResale],
-      ["website", String(b.website || "").trim()],
-      ["sms_consent", b.sms_consent === "yes" ? "yes" : "no"],
+      ["website", website],
+      ["sms_consent", smsConsent ? "yes" : "no"],
       ["applied_at", new Date().toISOString()],
       ["application_status", isPartial ? "partial" : "complete"],
     ].filter(([, v]) => v !== "");
@@ -78,15 +85,21 @@ export async function POST(req) {
     }));
 
     const address1 = String(b.address1 || "").trim();
+    const city = String(b.city || "").trim();
+    const province = String(b.state || "").trim();
+    const zip = String(b.zip || "").trim();
+    const country = String(b.country || "United States").trim();
+
     const addresses = address1
       ? [{
           address1,
           address2: String(b.address2 || "").trim() || null,
-          city: String(b.city || "").trim(),
-          province: String(b.state || "").trim(),
-          zip: String(b.zip || "").trim(),
-          country: String(b.country || "United States").trim(),
-          firstName, lastName,
+          city,
+          province,
+          zip,
+          country,
+          firstName,
+          lastName,
           company: businessName || null,
           phone: phone || null,
         }]
@@ -98,13 +111,14 @@ export async function POST(req) {
     );
     const existing = found.customers.nodes[0] || null;
 
+    let status;
+
     if (existing) {
       const tags = new Set(existing.tags);
       const approved = ACCESS_TAGS.some((t) => tags.has(t));
       const alreadyPending = tags.has("pending");
       if (!approved) {
         if (isPartial) {
-          // never downgrade a completed application to abandoned
           if (!alreadyPending) tags.add("abandoned-application");
         } else {
           tags.delete("abandoned-application");
@@ -115,33 +129,59 @@ export async function POST(req) {
       if (firstName) input.firstName = firstName;
       if (lastName) input.lastName = lastName;
       if (!isPartial && addresses) input.addresses = addresses;
+
       const d = await shopifyGraphQL(CUSTOMER_MUTATION("customerUpdate"), { input });
       if (d.customerUpdate.userErrors.length)
         throw new Error(JSON.stringify(d.customerUpdate.userErrors));
-      return json({ ok: true, status: approved ? "already_approved" : isPartial ? "partial" : "pending" });
+
+      status = approved ? "already_approved" : isPartial ? "partial" : "pending";
+    } else {
+      const input = {
+        email,
+        firstName: firstName || null,
+        lastName: lastName || null,
+        tags: [isPartial ? "abandoned-application" : "pending"],
+        metafields,
+      };
+      if (!isPartial && phone) input.phone = phone;
+      if (!isPartial && addresses) input.addresses = addresses;
+
+      let d = await shopifyGraphQL(CUSTOMER_MUTATION("customerCreate"), { input });
+      let errs = d.customerCreate.userErrors;
+      if (errs.length && JSON.stringify(errs).match(/phone|address/i)) {
+        // formatting rejections shouldn't lose the lead; retry bare
+        delete input.phone;
+        delete input.addresses;
+        d = await shopifyGraphQL(CUSTOMER_MUTATION("customerCreate"), { input });
+        errs = d.customerCreate.userErrors;
+      }
+      if (errs.length) throw new Error(JSON.stringify(errs));
+
+      status = isPartial ? "partial" : "pending";
     }
 
-    const input = {
-      email,
-      firstName: firstName || null,
-      lastName: lastName || null,
-      tags: [isPartial ? "abandoned-application" : "pending"],
-      metafields,
-    };
-    if (!isPartial && phone) input.phone = phone;
-    if (!isPartial && addresses) input.addresses = addresses;
-
-    let d = await shopifyGraphQL(CUSTOMER_MUTATION("customerCreate"), { input });
-    let errs = d.customerCreate.userErrors;
-    if (errs.length && JSON.stringify(errs).match(/phone|address/i)) {
-      // formatting rejections shouldn't lose the lead; retry bare
-      delete input.phone;
-      delete input.addresses;
-      d = await shopifyGraphQL(CUSTOMER_MUTATION("customerCreate"), { input });
-      errs = d.customerCreate.userErrors;
+    // Notify sales on a completed application only, never on a partial.
+    // Awaited so the serverless function doesn't exit before it sends,
+    // and it can never fail the request.
+    if (!isPartial) {
+      try {
+        await notifyNewApplication({
+          email,
+          contactName: [firstName, lastName].filter(Boolean).join(" "),
+          businessName,
+          phone,
+          einResale,
+          website,
+          about,
+          smsConsent,
+          address: [address1, city, province, zip, country].filter(Boolean).join(", "),
+        });
+      } catch (e) {
+        console.error("wholesale/apply: notification failed", e);
+      }
     }
-    if (errs.length) throw new Error(JSON.stringify(errs));
-    return json({ ok: true, status: isPartial ? "partial" : "pending" });
+
+    return json({ ok: true, status });
   } catch (e) {
     console.error("wholesale/apply:", e);
     return json({ error: "Something went wrong. Please email sales@advanceapparels.com." }, 500);
