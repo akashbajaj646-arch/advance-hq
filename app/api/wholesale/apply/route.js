@@ -202,6 +202,36 @@ export async function POST(req) {
       }
     }
 
+    // Email marketing consent. The form states that submitting opts them in,
+    // which is what lets them sync to Mailchimp as Subscribed and enter the
+    // onboarding series. Completed applications only, never a partial.
+    if (!isPartial && existing && existing.id) {
+      try {
+        const c = await shopifyGraphQL(
+          `mutation($input: CustomerEmailMarketingConsentUpdateInput!) {
+            customerEmailMarketingConsentUpdate(input: $input) {
+              userErrors { field message }
+            }
+          }`,
+          {
+            input: {
+              customerId: existing.id,
+              emailMarketingConsent: {
+                marketingState: "SUBSCRIBED",
+                marketingOptInLevel: "SINGLE_OPT_IN",
+                consentUpdatedAt: new Date().toISOString(),
+              },
+            },
+          }
+        );
+        const ce = (c && c.customerEmailMarketingConsentUpdate
+          && c.customerEmailMarketingConsentUpdate.userErrors) || [];
+        if (ce.length) console.error("marketing consent:", JSON.stringify(ce));
+      } catch (e) {
+        console.error("wholesale/apply: marketing consent failed", e);
+      }
+    }
+
     // Notify sales on a brand new completed application only. Never on a
     // partial, a resubmission, or an already-approved customer.
     // Awaited so the serverless function doesn't exit before it sends,
