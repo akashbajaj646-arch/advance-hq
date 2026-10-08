@@ -13,8 +13,26 @@ import { compileRules } from "@/lib/wholesaleRules";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const PAGE_SIZE = 50;
-const PAGES_PER_CALL = 8; // 400 products per request
+const PAGE_SIZE = 40;
+const PAGES_PER_CALL = 6; // 240 products per request
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Shopify's API budget refills over time. A throttled call isn't a failure,
+// it's a request to wait, so we wait and try again instead of losing the run.
+async function callWithBackoff(query, variables, attempts = 6) {
+  let wait = 1000;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await shopifyGraphQL(query, variables);
+    } catch (e) {
+      const msg = String(e?.message || e);
+      if (!/throttle/i.test(msg) || i === attempts - 1) throw e;
+      await sleep(wait);
+      wait = Math.min(wait * 2, 8000);
+    }
+  }
+}
 
 const PRODUCTS = `
   query($first: Int!, $after: String) {
@@ -88,7 +106,7 @@ export async function POST(req) {
 
     while (pages < PAGES_PER_CALL && hasNext) {
       pages++;
-      const d = await shopifyGraphQL(PRODUCTS, { first: PAGE_SIZE, after });
+      const d = await callWithBackoff(PRODUCTS, { first: PAGE_SIZE, after });
       const conn = d?.products;
       if (!conn) break;
 
@@ -113,13 +131,15 @@ export async function POST(req) {
       // metafieldsSet takes 25 at a time.
       for (let i = 0; i < writes.length; i += 25) {
         const batch = writes.slice(i, i + 25);
-        const r = await shopifyGraphQL(SET, { metafields: batch });
+        const r = await callWithBackoff(SET, { metafields: batch });
         const errs = r?.metafieldsSet?.userErrors || [];
         if (errs.length) console.error("sync metafieldsSet:", JSON.stringify(errs));
+        await sleep(200);
       }
 
       hasNext = !!conn.pageInfo?.hasNextPage;
       after = conn.pageInfo?.endCursor || null;
+      await sleep(350);
     }
 
     return Response.json({

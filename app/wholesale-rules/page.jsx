@@ -167,7 +167,14 @@ export default function WholesaleRules() {
           body: JSON.stringify({ after }),
         });
         const sj = await s.json();
-        if (sj.error) throw new Error(sj.error);
+        if (sj.error) {
+          // Rate limits resolve on their own. Pause and pick up where we left off.
+          if (/throttl/i.test(sj.error)) {
+            await new Promise((r) => setTimeout(r, 5000));
+            continue;
+          }
+          throw new Error(sj.error);
+        }
         scanned += sj.scanned || 0;
         stamped += sj.stamped || 0;
         setNote(`Published ${j.rules} rules. Tagging products: ${scanned} checked...`);
