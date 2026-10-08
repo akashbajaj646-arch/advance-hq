@@ -153,8 +153,28 @@ export default function WholesaleRules() {
       const miss = j.missing_collections || [];
       setNote(
         `Published ${j.rules} rules, ${(j.bytes / 1024).toFixed(1)}KB` +
-        (miss.length ? `. Unresolved: ${miss.join(", ")}` : "")
+        (miss.length ? `. Unresolved: ${miss.join(", ")}` : "") +
+        ". Tagging products..."
       );
+
+      // Products carry the rule that applies to them, so they need
+      // re-stamping whenever the rules change.
+      let after = null, scanned = 0, stamped = 0, guard = 0;
+      while (guard++ < 200) {
+        const s = await fetch("/api/wholesale/rules/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ after }),
+        });
+        const sj = await s.json();
+        if (sj.error) throw new Error(sj.error);
+        scanned += sj.scanned || 0;
+        stamped += sj.stamped || 0;
+        setNote(`Published ${j.rules} rules. Tagging products: ${scanned} checked...`);
+        if (sj.done) break;
+        after = sj.next;
+      }
+      setNote(`Published ${j.rules} rules. ${scanned} products checked, ${stamped} updated.`);
     } catch (e) {
       setError(String(e.message || e));
     } finally {
