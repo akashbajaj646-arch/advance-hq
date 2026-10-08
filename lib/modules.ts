@@ -46,6 +46,7 @@ export const MODULES: ModuleDef[] = [
   { key: 'payments', label: 'Payments', href: '/payments', prefixes: ['/payments'] },
   { key: 'payment-links', label: 'Payment Links', href: '/payment-links', prefixes: ['/payment-links'] },
   { key: 'wholesale-approvals', label: 'Wholesale Applications', href: '/wholesale-applications', prefixes: ['/wholesale-applications', '/wholesale-approvals'] },
+  { key: 'wholesale-rules', label: 'Pricing Rules', href: '/wholesale-rules', prefixes: ['/wholesale-rules'] },
   { key: 'purchase-orders', label: 'Purchase Orders', href: '/purchase-orders', prefixes: ['/purchase-orders'] },
   { key: 'shipments', label: 'Shipments', href: '/shipments', prefixes: ['/shipments'] },
   { key: 'shipping', label: 'Shipping Module', href: '/shipping/queue', prefixes: ['/shipping'] },
