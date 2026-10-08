@@ -59,6 +59,14 @@ export async function POST(req) {
     const about = String(b.about || "").trim();
     const smsConsent = b.sms_consent === "yes";
 
+    // Per-landing-page tag, set in the theme customizer. Sanitised hard
+    // because it arrives from a public endpoint and becomes a Shopify tag.
+    const sourceTag = String(b.source_tag || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, "")
+      .slice(0, 40);
+
     if (!isPartial) {
       if (!businessName) return json({ error: "Business name required" }, 400);
       if (!firstName) return json({ error: "Name required" }, 400);
@@ -125,6 +133,7 @@ export async function POST(req) {
       const tags = new Set(customer.tags || []);
       const approved = ACCESS_TAGS.some((t) => tags.has(t));
       const alreadyPending = tags.has("pending");
+      if (sourceTag) tags.add(sourceTag);
 
       if (!approved) {
         if (isPartial) {
@@ -161,7 +170,7 @@ export async function POST(req) {
         email,
         firstName: firstName || null,
         lastName: lastName || null,
-        tags: [isPartial ? "abandoned-application" : "pending"],
+        tags: [isPartial ? "abandoned-application" : "pending"].concat(sourceTag ? [sourceTag] : []),
         metafields,
       };
       if (!isPartial && phone) input.phone = phone;
@@ -267,7 +276,7 @@ export async function POST(req) {
       address: [address1, city, province, zip, country].filter(Boolean).join(", "),
       smsConsent,
       isPartial,
-      source: "website",
+      source: sourceTag || "website",
     });
 
     return json({ ok: true, status });
