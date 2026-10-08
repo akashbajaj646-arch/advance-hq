@@ -44,6 +44,14 @@ const CREATE = `
     }
   }`;
 
+const UPDATE = `
+  mutation($id: ID!, $discount: DiscountAutomaticAppInput!) {
+    discountAutomaticAppUpdate(id: $id, automaticAppDiscount: $discount) {
+      automaticAppDiscount { discountId title status startsAt }
+      userErrors { field message }
+    }
+  }`;
+
 const DELETE = `
   mutation($id: ID!) {
     discountAutomaticDelete(id: $id) {
@@ -100,7 +108,11 @@ export async function POST(req) {
       const discount = {
         title: b.title || "Wholesale volume pricing",
         functionId: b.functionId,
-        startsAt: new Date().toISOString(),
+        // Scheduled far ahead means the discount exists but does nothing.
+        // Call action "activate" when you actually want prices to change.
+        startsAt: b.activate
+          ? new Date().toISOString()
+          : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
         combinesWith: {
           orderDiscounts: false,
           productDiscounts: false,
@@ -123,7 +135,23 @@ export async function POST(req) {
       return Response.json({ ok: true, discount: d.discountAutomaticAppCreate.automaticAppDiscount });
     }
 
-    return Response.json({ error: "action must be create or delete" }, { status: 400 });
+    if (b.action === "activate" || b.action === "deactivate") {
+      if (!b.id) return Response.json({ error: "id required" }, { status: 400 });
+      const startsAt =
+        b.action === "activate"
+          ? new Date().toISOString()
+          : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+
+      const d = await shopifyGraphQL(UPDATE, {
+        id: b.id,
+        discount: { startsAt },
+      });
+      const errs = d?.discountAutomaticAppUpdate?.userErrors || [];
+      if (errs.length) throw new Error(JSON.stringify(errs));
+      return Response.json({ ok: true, discount: d.discountAutomaticAppUpdate.automaticAppDiscount });
+    }
+
+    return Response.json({ error: "action must be create, activate, deactivate or delete" }, { status: 400 });
   } catch (err) {
     console.error("wholesale/discount POST:", err);
     return Response.json({ error: String(err?.message || err) }, { status: 500 });
