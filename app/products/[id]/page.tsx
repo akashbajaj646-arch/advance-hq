@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { db } from '@/lib/db';
+import ProductAttributes from '@/components/ProductAttributes';
 
 type Store = 'b2b' | 'dtc';
 type Policy = 'CONTINUE' | 'DENY';
@@ -49,7 +50,7 @@ export default function ProductDetailPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [images, setImages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'skus' | 'images' | 'details'>('skus');
+  const [tab, setTab] = useState<'skus' | 'images' | 'attributes' | 'details'>('skus');
 
   const [shop, setShop] = useState<Record<string, Partial<Record<Store, Cell>>>>({});
   const [shopLoading, setShopLoading] = useState(false);
@@ -400,7 +401,7 @@ export default function ProductDetailPage() {
   if (loading) return <div className="p-8"><div className="animate-pulse"><div className="h-6 bg-gray-200 rounded w-48 mb-4"></div><div className="h-48 bg-gray-200 rounded"></div></div></div>;
   if (!product) return <div className="p-8"><Link href="/products" className="text-sm text-brand-600 hover:underline mb-4 inline-block">&larr; Back to Products</Link><div className="card text-center py-12"><p className="text-gray-400 text-lg">Product not found</p></div></div>;
 
-  const tabs = [{ key: 'skus' as const, label: 'SKUs', count: rows.length }, { key: 'images' as const, label: 'Images', count: images.length }, { key: 'details' as const, label: 'Details', count: 0 }];
+  const tabs = [{ key: 'skus' as const, label: 'SKUs', count: rows.length }, { key: 'images' as const, label: 'Images', count: images.length }, { key: 'attributes' as const, label: 'Attributes', count: 0 }, { key: 'details' as const, label: 'Details', count: 0 }];
   const allActive = rows.length > 0 && rows.every(r => r.active);
   const anyActiveBusy = rows.some(r => busy[`${r.sku_id}|active`]);
 
@@ -555,6 +556,7 @@ export default function ProductDetailPage() {
           </table>
         )}
         {tab === 'images' && (<div className="p-6">{images.length === 0 ? <p className="text-gray-400 text-center py-8">No images</p> : <div className="grid grid-cols-4 gap-4">{images.map((img, i) => (<div key={i} className="aspect-square rounded-lg overflow-hidden border border-gray-200 bg-gray-50">{img.image_url ? <img src={img.image_url} alt={`${product.style_number} ${i + 1}`} className="w-full h-full object-cover" /> : <div className="flex items-center justify-center h-full text-gray-300 text-xs">No URL</div>}</div>))}</div>}</div>)}
+        {tab === 'attributes' && <ProductAttributes productId={String(product.product_id)} />}
         {tab === 'details' && (<div className="p-6 grid grid-cols-2 gap-x-8 gap-y-2 text-sm">{Object.entries(product).filter(([k]) => !['id', 'created_at', 'updated_at', 'am_last_modified_time'].includes(k)).map(([key, val]) => (<div key={key} className="flex justify-between py-1 border-b border-gray-50"><span className="text-xs text-gray-400">{key.replace(/_/g, ' ')}</span><span className="text-gray-700 text-right max-w-[60%] truncate">{String(val || '')}</span></div>))}</div>)}
       </div>
 
